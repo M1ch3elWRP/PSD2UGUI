@@ -46,6 +46,10 @@ namespace PSDImporter
         [Tooltip("Override text component. Must derive from UnityEngine.UI.Text.")]
         public MonoScript textComponent;
 
+        [Header("Text Font Override")]
+        [Tooltip("If set, all generated/restored Text components use this font.")]
+        public Font defaultTextFont;
+
         [Header("Layout Overrides (optional)")]
         [Tooltip("Override @H layout group. Must derive from UnityEngine.UI.HorizontalLayoutGroup.")]
         public MonoScript horizontalLayoutComponent;

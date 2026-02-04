@@ -26,6 +26,7 @@ MonoBehaviour:
   rawImageComponent: {fileID: 0}
   buttonComponent: {fileID: 0}
   textComponent: {fileID: 0}
+  defaultTextFont: {fileID: 12800000, guid: f236f7f24784b88468aa6a837b0da239, type: 3}
   horizontalLayoutComponent: {fileID: 0}
   verticalLayoutComponent: {fileID: 0}
   gridLayoutComponent: {fileID: 0}

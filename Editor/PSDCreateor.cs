@@ -115,7 +115,7 @@ namespace PSDImporter
             {
                 case "Text":
                     var txt = EnsureComponentWithOverride<Text>(go, config != null ? config.textComponent : null);
-                    SetupText(txt, item);
+                    SetupText(txt, item, config);
                     break;
 
                 case "Button":
@@ -489,7 +489,7 @@ namespace PSDImporter
 
         // --- 组件 Setup 方法 ---
 
-        public static void SetupText(UnityEngine.UI.Text txt, PicData item)
+        public static void SetupText(UnityEngine.UI.Text txt, PicData item, PSDImportConfig config)
         {
             txt.text = item.textContent;
             txt.fontSize = Mathf.RoundToInt(item.fontSize);
@@ -497,7 +497,14 @@ namespace PSDImporter
             txt.horizontalOverflow = HorizontalWrapMode.Overflow;
             txt.verticalOverflow = VerticalWrapMode.Overflow;
             txt.alignment = TextAnchor.MiddleCenter;
-            if (txt.font == null) txt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            if (config != null && config.defaultTextFont != null)
+            {
+                txt.font = config.defaultTextFont;
+            }
+            else if (txt.font == null)
+            {
+                txt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            }
             //txt.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, item.width);
             //txt.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, item.height);
             // 注意：不要在这里再次 SetSize，因为外面已经 Set 过了
