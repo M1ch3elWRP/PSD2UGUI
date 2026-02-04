@@ -336,8 +336,7 @@ function run() {
                     try {
                         var ti = layer.textItem;
                         var txtContent = escapeForJson(ti.contents);
-                        var txtSize = 24;
-                        try { txtSize = ti.size.as("px"); } catch (e) { txtSize = parseFloat(ti.size); }
+                        var txtSize = getTextSizePx(layer, ti, exportDoc, pngScale);
                         var txtColor = rgbToHex(ti.color);
                         jsonDataItem += ',"isText":true,"content":"' + txtContent + '","fontSize":' + txtSize + ',"fontColor":"#' + txtColor + '"';
                     } catch (e) { jsonDataItem += ',"isText":false'; }
@@ -670,6 +669,96 @@ function countAssocArray(obj) { var c=0; for(var k in obj)c++; return c; }
 function trim(s) { return s.replace(/^\s+|\s+$/g, ""); }
 function stripSuffix(str, suffix) { if (endsWith(str.toLowerCase(), suffix.toLowerCase())) str = str.substring(0, str.length - suffix.length); return str; }
 function layerName(layer) { return stripSuffix(trim(layer.name), ".png").replace(/[:\/\\*\?\"\<\>\|]/g, ""); }
+function getTextSizePx(layer, textItem, doc, scale) {
+    var size = 0;
+    var sizeBase = 0;
+    var res = 72;
+    var uvType = null;
+    var uvValue = null;
+    var uvAsPt = null;
+    var uvAsPx = null;
+    try {
+        var uv = textItem.size;
+        if (doc && doc.resolution) res = doc.resolution;
+        if (uv) {
+            if (uv.type != undefined) {
+                uvType = "" + uv.type;
+                var t = uvType.toLowerCase();
+                if (uv.value != undefined) uvValue = uv.value;
+                if (uv.as) {
+                    try { uvAsPt = uv.as("pt"); } catch (e) {}
+                    try { uvAsPx = uv.as("px"); } catch (e) {}
+                }
+                if (t == "px" || t == "pixel" || t == "pixels") {
+                    size = uvValue;
+                } else if (t == "pt" || t == "point" || t == "points") {
+                    size = uvValue * res / 72;
+                } else if (uvAsPx != null) {
+                    size = uvAsPx;
+                } else if (uvValue != undefined) {
+                    size = uvValue;
+                }
+            } else {
+                var basePt = 0;
+                if (uv.as) {
+                    try { uvAsPt = uv.as("pt"); } catch (e) {}
+                    try { uvAsPx = uv.as("px"); } catch (e) {}
+                }
+                if (uv.value != undefined) uvValue = uv.value;
+                if (uvAsPt != null) {
+                    basePt = uvAsPt;
+                } else if (uvValue != undefined) {
+                    basePt = uvValue;
+                }
+                if (basePt) {
+                    size = basePt * res / 72;
+                }
+            }
+        }
+    } catch (e) {}
+
+    if (!size || isNaN(size)) {
+        try { size = parseFloat(textItem.size); } catch (e) { size = 0; }
+    }
+    if (!size || isNaN(size)) size = 24;
+
+    var vScale = 1;
+    try { if (textItem.verticalScale != undefined) vScale = textItem.verticalScale / 100.0; } catch (e) {}
+    sizeBase = size;
+    size = size * vScale;
+
+    var tScale = 1;
+    try { tScale = getTextLayerTransformScale(layer); } catch (e) { tScale = 1; }
+    size = size * tScale;
+    if (scale && scale != 1) size = size * scale;
+    size = Math.round(size * 10) / 10;
+
+    return size;
+}
+
+function getTextLayerTransformScale(layer) {
+    var scale = 1;
+    try {
+        var ref = new ActionReference();
+        ref.putIdentifier(charIDToTypeID("Lyr "), layer.id);
+        var desc = executeActionGet(ref);
+        if (desc.hasKey(stringIDToTypeID("textKey"))) {
+            var textKey = desc.getObjectValue(stringIDToTypeID("textKey"));
+            if (textKey.hasKey(stringIDToTypeID("transform"))) {
+                var tr = textKey.getObjectValue(stringIDToTypeID("transform"));
+                var xx = tr.getDouble(stringIDToTypeID("xx"));
+                var xy = tr.getDouble(stringIDToTypeID("xy"));
+                var yx = tr.getDouble(stringIDToTypeID("yx"));
+                var yy = tr.getDouble(stringIDToTypeID("yy"));
+                var sx = Math.sqrt(xx * xx + xy * xy);
+                var sy = Math.sqrt(yy * yy + yx * yx);
+                scale = (sx + sy) * 0.5;
+            }
+        }
+    } catch (e) {}
+    if (!scale || isNaN(scale)) scale = 1;
+    return scale;
+}
 function allocateUniquePngName(baseName, dir, usedMap) {
     if (!usedMap[dir]) usedMap[dir] = {};
     if (!usedMap[dir][baseName]) {
