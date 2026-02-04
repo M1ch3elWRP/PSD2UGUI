@@ -32,7 +32,7 @@ namespace PSDImporter
             foreach (var item in psdData.listPngData)
             {
                 RectTransform tranParent = BuildHierarchy(rootRectTrans, item.groupName);
-                GameObject createdGo = CreateNodeObject(item, tranParent);
+                GameObject createdGo = CreateNodeObject(item, tranParent, config);
 
                 // 刷新数据
                 RefreshNode(createdGo, item, psdData, true, config);
@@ -111,12 +111,12 @@ namespace PSDImporter
             switch (item.uiType)
             {
                 case "Text":
-                    var txt = EnsureComponent<Text>(go);
+                    var txt = EnsureComponentWithOverride<Text>(go, config != null ? config.textComponent : null);
                     SetupText(txt, item);
                     break;
 
                 case "Button":
-                    EnsureComponent<Button>(go);
+                    EnsureComponentWithOverride<Button>(go, config != null ? config.buttonComponent : null);
                     //if (go.GetComponent<Image>() == null)
                     //{
                     //    var img = go.AddComponent<Image>();
@@ -134,12 +134,19 @@ namespace PSDImporter
                     // 纯布局容器，无需 Image
                     break;
 
-                case "Image":
                 case "RawImage":
+                    if (item.layoutType == "None")
+                    {
+                        var raw = EnsureComponentWithOverride<RawImage>(go, config != null ? config.rawImageComponent : null);
+                        SetupRawImage(raw, item, psdData.psdAssetsFolder);
+                    }
+                    break;
+
+                case "Image":
                 default:
                     if (item.layoutType == "None")
                     {
-                        var img = EnsureComponent<Image>(go);
+                        var img = EnsureComponentWithOverride<Image>(go, config != null ? config.imageComponent : null);
                         SetupImage(img, item, psdData.psdAssetsFolder, config);
                     }
                     break;
@@ -189,7 +196,7 @@ namespace PSDImporter
                         layoutChildren = onlyItems;
                     }
                     // B. 应用 Layout 参数 (Padding, Spacing)
-                    PSDLayoutTool.ApplyLayoutGroup(go, item, layoutChildren);
+                    PSDLayoutTool.ApplyLayoutGroup(go, item, layoutChildren, config);
 
                     // C. 【核心逻辑】找到 @Item 模板，强行应用给所有 Unity 子节点
                     var templateItem = layoutChildren.Find(x => x.uiType == "Item");
@@ -312,13 +319,10 @@ namespace PSDImporter
             return null;
         }
 
-        private static GameObject CreateNodeObject(PicData item, Transform parent)
+        private static GameObject CreateNodeObject(PicData item, Transform parent, PSDImportConfig config)
         {
-            GameObject go = null;
-            if (item.uiType == "Text") go = CreateGo<UnityEngine.UI.Text>(item.cleanName, parent, "UI").gameObject;
-            else if (item.uiType == "RawImage") go = CreateGo<UnityEngine.UI.RawImage>(item.cleanName, parent, "UI").gameObject;
-            else go = CreateGo<UnityEngine.UI.Image>(item.cleanName, parent, "UI").gameObject;
-            return go;
+            // Create base node; components are added in RefreshNode to honor overrides.
+            return CreateGo<RectTransform>(item.cleanName, parent, "UI").gameObject;
         }
 
         private static void ApplyPsdPosition(Transform target, Transform root, PicData item, PSDData psdData)
@@ -530,15 +534,42 @@ namespace PSDImporter
 
         // --- 通用辅助 ---
 
+        private static T EnsureComponentWithOverride<T>(GameObject go, MonoScript overrideScript) where T : UnityEngine.Component
+        {
+            var overrideType = GetOverrideType<T>(overrideScript);
+            if (overrideType != null)
+            {
+                RemoveConflictingUiComponents<T>(go);
+                var comp = go.GetComponent(overrideType) as T;
+                if (comp == null) comp = go.AddComponent(overrideType) as T;
+                return comp;
+            }
+            return EnsureComponent<T>(go);
+        }
+
+        private static System.Type GetOverrideType<T>(MonoScript script) where T : UnityEngine.Component
+        {
+            if (script == null) return null;
+            var type = script.GetClass();
+            if (type == null) return null;
+            if (!typeof(T).IsAssignableFrom(type)) return null;
+            return type;
+        }
+
+        private static void RemoveConflictingUiComponents<T>(GameObject go) where T : UnityEngine.Component
+        {
+            if (typeof(T) == typeof(UnityEngine.UI.RawImage)) { DestroyIfExists<UnityEngine.UI.Image>(go); DestroyIfExists<UnityEngine.UI.Text>(go); }
+            else if (typeof(T) == typeof(UnityEngine.UI.Image)) { DestroyIfExists<UnityEngine.UI.RawImage>(go); DestroyIfExists<UnityEngine.UI.Text>(go); }
+            else if (typeof(T) == typeof(UnityEngine.UI.Text)) { DestroyIfExists<UnityEngine.UI.Image>(go); DestroyIfExists<UnityEngine.UI.RawImage>(go); }
+        }
+
         private static T EnsureComponent<T>(GameObject go) where T : UnityEngine.Component
         {
             T comp = go.GetComponent<T>();
             if (comp == null)
             {
                 // 互斥清理
-                if (typeof(T) == typeof(UnityEngine.UI.RawImage)) { DestroyIfExists<UnityEngine.UI.Image>(go); DestroyIfExists<UnityEngine.UI.Text>(go); }
-                else if (typeof(T) == typeof(UnityEngine.UI.Image)) { DestroyIfExists<UnityEngine.UI.RawImage>(go); DestroyIfExists<UnityEngine.UI.Text>(go); }
-                else if (typeof(T) == typeof(UnityEngine.UI.Text)) { DestroyIfExists<UnityEngine.UI.Image>(go); DestroyIfExists<UnityEngine.UI.RawImage>(go); }
+                RemoveConflictingUiComponents<T>(go);
                 comp = go.AddComponent<T>();
             }
             return comp;

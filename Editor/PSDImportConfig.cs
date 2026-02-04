@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEditor;
 
 namespace PSDImporter
 {
@@ -23,5 +24,28 @@ namespace PSDImporter
         [Header("Auto 9-Slice")]
         [Tooltip("Detect large uniform borders from PNGs and set sprite borders.")]
         public bool autoSlice = false;
+
+        [Header("Component Overrides (optional)")]
+        [Tooltip("Override @Img/@Image component. Must derive from UnityEngine.UI.Image.")]
+        public MonoScript imageComponent;
+
+        [Tooltip("Override @Bg component. Must derive from UnityEngine.UI.RawImage.")]
+        public MonoScript rawImageComponent;
+
+        [Tooltip("Override @Btn component. Must derive from UnityEngine.UI.Button.")]
+        public MonoScript buttonComponent;
+
+        [Tooltip("Override text component. Must derive from UnityEngine.UI.Text.")]
+        public MonoScript textComponent;
+
+        [Header("Layout Overrides (optional)")]
+        [Tooltip("Override @H layout group. Must derive from UnityEngine.UI.HorizontalLayoutGroup.")]
+        public MonoScript horizontalLayoutComponent;
+
+        [Tooltip("Override @V layout group. Must derive from UnityEngine.UI.VerticalLayoutGroup.")]
+        public MonoScript verticalLayoutComponent;
+
+        [Tooltip("Override @G layout group. Must derive from UnityEngine.UI.GridLayoutGroup.")]
+        public MonoScript gridLayoutComponent;
     }
 }

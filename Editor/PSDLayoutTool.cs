@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -10,7 +11,7 @@ namespace PSDImporter
         /// <summary>
         /// 核心入口：应用 LayoutGroup 设置
         /// </summary>
-        public static void ApplyLayoutGroup(GameObject groupGo, PicData groupData, List<PicData> childrenPSD)
+        public static void ApplyLayoutGroup(GameObject groupGo, PicData groupData, List<PicData> childrenPSD, PSDImportConfig config = null)
         {
             if (childrenPSD == null || childrenPSD.Count == 0)
             {
@@ -25,25 +26,25 @@ namespace PSDImporter
             // 根据 Layout 类型分发
             if (groupData.layoutType == "Horizontal")
             {
-                SetupLinear(groupGo, groupData, childrenPSD, true);
+                SetupLinear(groupGo, groupData, childrenPSD, true, config);
             }
             else if (groupData.layoutType == "Vertical")
             {
-                SetupLinear(groupGo, groupData, childrenPSD, false);
+                SetupLinear(groupGo, groupData, childrenPSD, false, config);
             }
             else if (groupData.layoutType == "Grid")
             {
-                SetupGrid(groupGo, groupData, childrenPSD);
+                SetupGrid(groupGo, groupData, childrenPSD, config);
             }
         }
 
         // --- 线性布局 (Horizontal / Vertical) ---
-        private static void SetupLinear(GameObject go, PicData group, List<PicData> children, bool isHorizontal)
+        private static void SetupLinear(GameObject go, PicData group, List<PicData> children, bool isHorizontal, PSDImportConfig config)
         {
             // 1. 获取或添加组件
             var lg = isHorizontal ?
-                EnsureComponent<HorizontalLayoutGroup>(go) as HorizontalOrVerticalLayoutGroup :
-                EnsureComponent<VerticalLayoutGroup>(go) as HorizontalOrVerticalLayoutGroup;
+                EnsureLayoutComponent<HorizontalLayoutGroup>(go, config != null ? config.horizontalLayoutComponent : null) as HorizontalOrVerticalLayoutGroup :
+                EnsureLayoutComponent<VerticalLayoutGroup>(go, config != null ? config.verticalLayoutComponent : null) as HorizontalOrVerticalLayoutGroup;
 
             // 2. 排序 (确保按照视觉顺序计算间距)
             if (isHorizontal)
@@ -97,9 +98,9 @@ namespace PSDImporter
         }
 
         // --- 网格布局 (Grid) ---
-        private static void SetupGrid(GameObject go, PicData group, List<PicData> children)
+        private static void SetupGrid(GameObject go, PicData group, List<PicData> children, PSDImportConfig config)
         {
-            var glg = EnsureComponent<GridLayoutGroup>(go);
+            var glg = EnsureLayoutComponent<GridLayoutGroup>(go, config != null ? config.gridLayoutComponent : null);
 
             // 1. Cell Size (取第一个子物体的大小)
             glg.cellSize = new Vector2(children[0].width, children[0].height);
@@ -131,6 +132,40 @@ namespace PSDImporter
             // 3. 基础设置
             glg.startCorner = GridLayoutGroup.Corner.UpperLeft;
             glg.childAlignment = TextAnchor.UpperLeft;
+        }
+
+        private static T EnsureLayoutComponent<T>(GameObject go, MonoScript overrideScript) where T : Component
+        {
+            var overrideType = GetOverrideType<T>(overrideScript);
+            if (overrideType != null)
+            {
+                RemoveOtherLayoutGroups(go, overrideType);
+                var comp = go.GetComponent(overrideType) as T;
+                if (comp == null) comp = go.AddComponent(overrideType) as T;
+                return comp;
+            }
+            return EnsureComponent<T>(go);
+        }
+
+        private static System.Type GetOverrideType<T>(MonoScript script) where T : Component
+        {
+            if (script == null) return null;
+            var type = script.GetClass();
+            if (type == null) return null;
+            if (!typeof(T).IsAssignableFrom(type)) return null;
+            return type;
+        }
+
+        private static void RemoveOtherLayoutGroups(GameObject go, System.Type keepType)
+        {
+            var layoutGroups = go.GetComponents<LayoutGroup>();
+            for (int i = 0; i < layoutGroups.Length; i++)
+            {
+                if (layoutGroups[i] != null && layoutGroups[i].GetType() != keepType)
+                {
+                    Object.DestroyImmediate(layoutGroups[i]);
+                }
+            }
         }
 
         private static T EnsureComponent<T>(GameObject go) where T : Component

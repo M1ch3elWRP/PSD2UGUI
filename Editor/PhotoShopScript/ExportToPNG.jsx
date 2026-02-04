@@ -12,6 +12,7 @@ var ignoreHiddenLayers = true;
 var pngScale = 1;
 var groupsAsSkins = false;
 var trimWhitespace = true; 
+var onlyTagged = true;
 var saveDir = "C:/Images/";
 
 // --- IDs ---
@@ -24,6 +25,7 @@ const groupsAsSkinsID = stringIDToTypeID("groupsAsSkins");
 const trimWhitespaceID = stringIDToTypeID("trimWhitespace");
 const pngScaleID = stringIDToTypeID("pngScale");
 const saveDirID = stringIDToTypeID("saveDir");
+const onlyTaggedID = stringIDToTypeID("onlyTagged");
 
 var psdName = "";
 var originalDoc;
@@ -77,12 +79,13 @@ function run() {
         // 在做任何 Trim/Hide 操作前，文档是完整的，此时计算组坐标最准。
         // =========================================================
         var layoutBoundsMap = preCalculateAllGroupBounds(exportDoc);
+        var usedPngNames = {}; // per output folder, avoid overwrite on duplicate names
 
         // =========================================================
         // 【关键步骤 B】常规图层收集
         // =========================================================
         var layers = [];
-        collectLayers(exportDoc, layers);
+        collectLayers(exportDoc, layers, onlyTagged);
 
         // 初始全隐藏 (这是原版逻辑的起点)
         hideAllLayers(exportDoc);
@@ -149,6 +152,7 @@ function run() {
 
                 // --- 坐标逻辑分流 ---
                 var x = 0, y = 0, width = 0, height = 0;
+                var targetDocW = 0, targetDocH = 0;
                 var usedPrecalc = false;
 
                 // 分支 1: 容器/Layout -> 直接从“预计算字典”取值 (不执行 Trim，不影响画布)
@@ -173,8 +177,21 @@ function run() {
                     var preTrimState = exportDoc.activeHistoryState;
 
                     // 2.1 合并/栅格化（避免组或智能对象导出黑图）
-                    layer = prepareLayerForExport(layer, suffixType);
+                    var isSmartObjectLayer = (layer.typename == "ArtLayer" && layer.kind == LayerKind.SMARTOBJECT);
+                    if (useLayerBounds && !isSmartObjectLayer) {
+                        try {
+                            exportDoc.activeLayer = layer;
+                            executeAction(stringIDToTypeID("newPlacedLayer"), undefined, DialogModes.NO);
+                            layer = exportDoc.activeLayer;
+                            isSmartObjectLayer = (layer.typename == "ArtLayer" && layer.kind == LayerKind.SMARTOBJECT);
+                        } catch (e) {}
+                    }
+                    if (!(useLayerBounds && isSmartObjectLayer)) {
+                        layer = prepareLayerForExport(layer, suffixType);
+                    }
 
+                    var layerBoundsW = 0;
+                    var layerBoundsH = 0;
                     if (useLayerBounds) {
                         var b = layer.bounds;
                         var l = b[0].as("px");
@@ -183,8 +200,16 @@ function run() {
                         var bot = b[3].as("px");
                         var rawW = Math.max(0, r - l);
                         var rawH = Math.max(0, bot - t);
+                        layerBoundsW = rawW;
+                        layerBoundsH = rawH;
                         width = rawW * pngScale;
                         height = rawH * pngScale;
+                        var targetW = padToMultipleOf4(width);
+                        var targetH = padToMultipleOf4(height);
+                        width = targetW;
+                        height = targetH;
+                        targetDocW = Math.round(width / pngScale);
+                        targetDocH = Math.round(height / pngScale);
                         x = (l * pngScale) + (width / 2);
                         var canvasH2 = exportDoc.height.as("px") * pngScale;
                         y = canvasH2 - (t * pngScale) - (height / 2);
@@ -230,29 +255,53 @@ function run() {
                         else if (!isContainer && layer.kind != LayerKind.TEXT) shouldSave = true;
                     }
 
-                    if (shouldSave) {
-                        if (width > 0 && height > 0) {
-                            var attachmentName = slotName;
-                            var finalDir = saveDir;
-                            if (groupsAsSkins && skinName != "root") {
-                                finalDir = saveDir + skinName + "/";
-                                new Folder(finalDir).create();
-                            }
+                    var attachmentName = slotName;
+                    var finalDir = saveDir;
+                    if (groupsAsSkins && skinName != "root") {
+                        finalDir = saveDir + skinName + "/";
+                        new Folder(finalDir).create();
+                    }
+                    attachmentName = allocateUniquePngName(attachmentName, finalDir, usedPngNames);
+                    slotName = attachmentName;
 
+                    if (useLayerBounds && isSmartObjectLayer) {
+                        var saveFile = shouldSave ? new File(finalDir + attachmentName + ".png") : null;
+                        var trimInfo = exportSmartObjectTrimmed(layer, saveFile);
+                        if (trimInfo) {
+                            var sx = (layerBoundsW > 0 && trimInfo.soW > 0) ? (layerBoundsW / trimInfo.soW) : 1;
+                            var sy = (layerBoundsH > 0 && trimInfo.soH > 0) ? (layerBoundsH / trimInfo.soH) : 1;
+                            width = trimInfo.finalW * sx;
+                            height = trimInfo.finalH * sy;
+                            var dx = ((trimInfo.left - trimInfo.right) * 0.5) * sx * pngScale;
+                            var dy = ((trimInfo.top - trimInfo.bottom) * 0.5) * sy * pngScale;
+                            x += dx;
+                            y -= dy;
+                        }
+                    } else if (shouldSave) {
+                        if (width > 0 && height > 0) {
                             if (useLayerBounds) {
-                                var tempDoc = app.documents.add(UnitValue(width / pngScale, "px"), UnitValue(height / pngScale, "px"),
-                                    exportDoc.resolution, "psd_full_export", NewDocumentMode.RGB, DocumentFill.TRANSPARENT);
-                                app.activeDocument = exportDoc;
-                                var dupLayer = layer.duplicate(tempDoc, ElementPlacement.PLACEATBEGINNING);
-                                app.activeDocument = tempDoc;
-                                tempDoc.activeLayer = dupLayer;
-                                var dup = tempDoc.activeLayer;
-                                var b2 = dup.bounds;
-                                dup.translate(-b2[0].as("px"), -b2[1].as("px"));
-                                if (pngScale != 1) scaleImage();
-                                savePNG(new File(finalDir + attachmentName + ".png"));
-                                tempDoc.close(SaveOptions.DONOTSAVECHANGES);
-                                app.activeDocument = exportDoc;
+                                var saveFile = new File(finalDir + attachmentName + ".png");
+                                if (isSmartObjectLayer) {
+                                    exportSmartObjectTrimmed(layer, saveFile);
+                                } else {
+                                    var tempDoc = app.documents.add(UnitValue(layerBoundsW, "px"), UnitValue(layerBoundsH, "px"),
+                                        exportDoc.resolution, "psd_full_export", NewDocumentMode.RGB, DocumentFill.TRANSPARENT);
+                                    app.activeDocument = exportDoc;
+                                    var dupLayer = layer.duplicate(tempDoc, ElementPlacement.PLACEATBEGINNING);
+                                    app.activeDocument = tempDoc;
+                                    tempDoc.activeLayer = dupLayer;
+                                    var dup = tempDoc.activeLayer;
+                                    var b2 = dup.bounds;
+                                    dup.translate(-b2[0].as("px"), -b2[1].as("px"));
+                                    if (targetDocW > 0 && targetDocH > 0 &&
+                                        (targetDocW != tempDoc.width.as("px") || targetDocH != tempDoc.height.as("px"))) {
+                                        tempDoc.resizeCanvas(UnitValue(targetDocW, "px"), UnitValue(targetDocH, "px"), AnchorPosition.MIDDLECENTER);
+                                    }
+                                    if (pngScale != 1) scaleImage();
+                                    savePNG(saveFile);
+                                    tempDoc.close(SaveOptions.DONOTSAVECHANGES);
+                                    app.activeDocument = exportDoc;
+                                }
                             } else {
                                 if (pngScale != 1) scaleImage();
                                 savePNG(new File(finalDir + attachmentName + ".png"));
@@ -387,11 +436,20 @@ function preCalculateAllGroupBounds(doc) {
 // Helpers (Standard)
 // =========================================================
 
-function collectLayers(parent, collect) {
+function collectLayers(parent, collect, onlyTagged) {
     for (var i = 0; i < parent.layers.length; i++) {
         var layer = parent.layers[i];
         if (ignoreHiddenLayers && !layer.visible) continue;
         if (layer.typename == "ArtLayer") { if (layer.bounds[2] == 0 && layer.bounds[3] == 0) continue; }
+
+        if (!onlyTagged) {
+            if (layer.typename == "ArtLayer") {
+                collect.push(layer);
+            } else if (layer.typename == "LayerSet") {
+                collectLayers(layer, collect, onlyTagged);
+            }
+            continue;
+        }
 
         var name = layer.name;
         var hasTag = (name.indexOf("@") != -1);
@@ -400,14 +458,14 @@ function collectLayers(parent, collect) {
 
         if (hasTag) {
             if (isAtomic) collect.push(layer);
-            else if (isContainer) { collect.push(layer); if (layer.typename == "LayerSet") collectLayers(layer, collect); }
-            else if (layer.typename == "LayerSet") collectLayers(layer, collect);
+            else if (isContainer) { collect.push(layer); if (layer.typename == "LayerSet") collectLayers(layer, collect, onlyTagged); }
+            else if (layer.typename == "LayerSet") collectLayers(layer, collect, onlyTagged);
             else collect.push(layer);
         } else {
             if (layer.typename == "ArtLayer" && layer.kind == LayerKind.TEXT) {
                 collect.push(layer);
             } else if (layer.typename == "LayerSet") {
-                collectLayers(layer, collect);
+                collectLayers(layer, collect, onlyTagged);
             }
         }
     }
@@ -463,6 +521,71 @@ function prepareLayerForExport(layer, suffixType) {
     return layer;
 }
 
+function padToMultipleOf4(value) {
+    if (value <= 0) return 0;
+    return Math.ceil(value / 4) * 4;
+}
+
+function exportSmartObjectTrimmed(layer, file) {
+    var info = null;
+    try {
+        app.activeDocument = exportDoc;
+        exportDoc.activeLayer = layer;
+        var editId = stringIDToTypeID("placedLayerEditContents");
+        executeAction(editId, undefined, DialogModes.NO);
+        var soDoc = app.activeDocument;
+
+        var soW = soDoc.width.as("px");
+        var soH = soDoc.height.as("px");
+        if (soDoc.layers.length > 1) {
+            try { soDoc.mergeVisibleLayers(); } catch (e) {}
+        }
+        var active = soDoc.activeLayer;
+        var b = active.bounds;
+        var l = b[0].as("px");
+        var t = b[1].as("px");
+        var r = b[2].as("px");
+        var bot = b[3].as("px");
+        var trimW = Math.max(0, r - l);
+        var trimH = Math.max(0, bot - t);
+        var left = l;
+        var top = t;
+        var right = Math.max(0, soW - r);
+        var bottom = Math.max(0, soH - bot);
+
+        if (trimW > 0 && trimH > 0) {
+            active.translate(-l, -t);
+            soDoc.resizeCanvas(UnitValue(trimW, "px"), UnitValue(trimH, "px"), AnchorPosition.TOPLEFT);
+        }
+
+        var finalW = padToMultipleOf4(trimW * pngScale);
+        var finalH = padToMultipleOf4(trimH * pngScale);
+        if (finalW > 0 && finalH > 0) {
+            var finalDocW = Math.round(finalW / pngScale);
+            var finalDocH = Math.round(finalH / pngScale);
+            if (finalDocW > 0 && finalDocH > 0 &&
+                (finalDocW != soDoc.width.as("px") || finalDocH != soDoc.height.as("px"))) {
+                soDoc.resizeCanvas(UnitValue(finalDocW, "px"), UnitValue(finalDocH, "px"), AnchorPosition.MIDDLECENTER);
+            }
+        }
+
+        if (pngScale != 1) scaleImage();
+        if (file) savePNG(file);
+
+        info = { soW: soW, soH: soH, trimW: trimW, trimH: trimH, left: left, top: top, right: right, bottom: bottom, finalW: finalW, finalH: finalH };
+        soDoc.close(SaveOptions.DONOTSAVECHANGES);
+    } catch (e) {
+        try {
+            if (app.activeDocument != exportDoc) {
+                app.activeDocument.close(SaveOptions.DONOTSAVECHANGES);
+            }
+        } catch (ignored) {}
+    } finally {
+        app.activeDocument = exportDoc;
+    }
+    return info;
+}
+
 // UI Fix: Ensure correct parent-child add
 function showDialog() {
     if (!originalDoc) { alert("Open Doc First"); return; }
@@ -488,6 +611,7 @@ function showDialog() {
     var chkIgnore = p2.add("checkbox", undefined, " Ignore Hidden"); chkIgnore.value = ignoreHiddenLayers;
     var chkGroups = p2.add("checkbox", undefined, " Use Groups"); chkGroups.value = groupsAsSkins;
     var chkTrim = p2.add("checkbox", undefined, " Trim Whitespace"); chkTrim.value = trimWhitespace;
+    var chkTagged = p2.add("checkbox", undefined, " Only Export @ Tagged"); chkTagged.value = onlyTagged;
 
     var grpScale = dlg.add("group");
     grpScale.add("statictext", undefined, "PNG Scale:");
@@ -512,6 +636,7 @@ function showDialog() {
         ignoreHiddenLayers = chkIgnore.value;
         groupsAsSkins = chkGroups.value;
         trimWhitespace = chkTrim.value;
+        onlyTagged = writeJson ? true : chkTagged.value;
         pngScale = parseFloat(txtScale.text) / 100;
         saveDir = txtPath.text;
         dlg.close(1);
@@ -519,12 +644,23 @@ function showDialog() {
     };
     btnCancel.onClick = function() { dlg.close(0); };
     
+    function refreshTaggedState() {
+        if (chkJson.value) {
+            chkTagged.value = true;
+            chkTagged.enabled = false;
+        } else {
+            chkTagged.enabled = true;
+        }
+    }
+    chkJson.onClick = refreshTaggedState;
+    refreshTaggedState();
+
     dlg.center();
     dlg.show();
 }
 
-function loadSettings() { try{settings=app.getCustomOptions(settingsID);}catch(e){return;} if(settings.hasKey(saveDirID)) saveDir=settings.getString(saveDirID); }
-function saveSettings() { var s=new ActionDescriptor(); s.putString(saveDirID, saveDir); app.putCustomOptions(settingsID, s, true); }
+function loadSettings() { try{settings=app.getCustomOptions(settingsID);}catch(e){return;} if(settings.hasKey(saveDirID)) saveDir=settings.getString(saveDirID); if(settings.hasKey(onlyTaggedID)) onlyTagged=settings.getBoolean(onlyTaggedID); }
+function saveSettings() { var s=new ActionDescriptor(); s.putString(saveDirID, saveDir); s.putBoolean(onlyTaggedID, onlyTagged); app.putCustomOptions(settingsID, s, true); }
 function scaleImage() { activeDocument.resizeImage(UnitValue(activeDocument.width.as("px")*pngScale,"px"), null, 300, ResampleMethod.BICUBICSHARPER); }
 function deleteDocumentAncestorsMetadata() {}
 function hasFilePath() { return originalDoc.path; }
@@ -532,6 +668,22 @@ function countAssocArray(obj) { var c=0; for(var k in obj)c++; return c; }
 function trim(s) { return s.replace(/^\s+|\s+$/g, ""); }
 function stripSuffix(str, suffix) { if (endsWith(str.toLowerCase(), suffix.toLowerCase())) str = str.substring(0, str.length - suffix.length); return str; }
 function layerName(layer) { return stripSuffix(trim(layer.name), ".png").replace(/[:\/\\*\?\"\<\>\|]/g, ""); }
+function allocateUniquePngName(baseName, dir, usedMap) {
+    if (!usedMap[dir]) usedMap[dir] = {};
+    if (!usedMap[dir][baseName]) {
+        usedMap[dir][baseName] = true;
+        return baseName;
+    }
+    var index = 1;
+    while (true) {
+        var candidate = baseName + "_" + index;
+        if (!usedMap[dir][candidate]) {
+            usedMap[dir][candidate] = true;
+            return candidate;
+        }
+        index++;
+    }
+}
 function endsWith(str, suffix) { return str.indexOf(suffix, str.length - suffix.length) !== -1; }
 function savePNG(file) { var o=new PNGSaveOptions(); o.compression=6; activeDocument.saveAs(file, o, true, Extension.LOWERCASE); }
 function escapeForJson(s) { if(!s)return""; return s.toString().replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n').replace(/\r/g,''); }
