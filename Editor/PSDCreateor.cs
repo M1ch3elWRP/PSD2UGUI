@@ -21,6 +21,7 @@ namespace PSDImporter
         public static void CreateUGUI_GenerateMode(PSDData psdData, PSDImportConfig config)
         {
             AssetDatabase.Refresh();
+            PSDAssetDeduper.EnsureScope(psdData.psdAssetsFolder);
             Transform canvasTrans = FindOrCreateCanvas();
             var rootRectTrans = CreateGo<RectTransform>(new DirectoryInfo(psdData.psdAssetsFolder).Name, canvasTrans, "UI");
 
@@ -48,6 +49,7 @@ namespace PSDImporter
         public static void CreateUGUI_SyncMode(PSDData psdData, Transform root, PSDImportConfig config)
         {
             AssetDatabase.Refresh();
+            PSDAssetDeduper.EnsureScope(psdData.psdAssetsFolder);
             matchedNodes.Clear();
             int count = 0;
 
@@ -79,6 +81,7 @@ namespace PSDImporter
         {
             RectTransform rt = go.GetComponent<RectTransform>();
             if (rt == null) rt = go.AddComponent<RectTransform>();
+            if (config != null && config.dedupeSprites) PSDAssetDeduper.EnsureScope(psdData.psdAssetsFolder);
 
             // 1. 设置尺寸 & 位置 (保持原样)
             Undo.RecordObject(rt, "Sync Transform");
@@ -138,7 +141,7 @@ namespace PSDImporter
                     if (item.layoutType == "None")
                     {
                         var raw = EnsureComponentWithOverride<RawImage>(go, config != null ? config.rawImageComponent : null);
-                        SetupRawImage(raw, item, psdData.psdAssetsFolder);
+                        SetupRawImage(raw, item, psdData.psdAssetsFolder, config);
                     }
                     break;
 
@@ -477,8 +480,15 @@ namespace PSDImporter
             string group = item.groupName == "root/" ? "/" : item.groupName;
             string folder = assetFolder.Replace("\\", "/");
             string pngpath = $"{folder}{group}{item.pngName}.png".Replace("//", "/");
+            string resolvedPath = PSDAssetDeduper.GetCanonicalPath(
+                pngpath,
+                config != null && config.dedupeSprites,
+                config != null && config.dedupeMoveDuplicates,
+                config != null ? config.dedupeMoveFolder : null,
+                assetFolder);
+            string resolvedAbs = PSDAssetDeduper.GetAbsolutePath(resolvedPath);
 
-            if (File.Exists(pngpath))
+            if (File.Exists(resolvedAbs))
             {
                 bool hasSlice = item.hasSlice;
                 Vector4 sliceBorder = item.sliceBorder;
@@ -489,7 +499,7 @@ namespace PSDImporter
                 }
                 else if (!hasSlice && config != null && config.autoSlice)
                 {
-                    if (PSDNineSliceUtility.TryDetectBorder(pngpath, out var detectedBorder))
+                    if (PSDNineSliceUtility.TryDetectBorder(resolvedAbs, out var detectedBorder))
                     {
                         hasSlice = true;
                         sliceBorder = detectedBorder;
@@ -497,9 +507,9 @@ namespace PSDImporter
                 }
                 if (hasSlice)
                 {
-                    FixSpriteImport(pngpath, sliceBorder);
+                    FixSpriteImport(resolvedPath, sliceBorder);
                 }
-                Sprite sp = AssetDatabase.LoadAssetAtPath<Sprite>(pngpath);
+                Sprite sp = AssetDatabase.LoadAssetAtPath<Sprite>(resolvedPath);
                 if (sp != null)
                 {
                     img.sprite = sp;
@@ -515,15 +525,22 @@ namespace PSDImporter
             }
         }
 
-        public static void SetupRawImage(UnityEngine.UI.RawImage raw, PicData item, string assetFolder)
+        public static void SetupRawImage(UnityEngine.UI.RawImage raw, PicData item, string assetFolder, PSDImportConfig config)
         {
             string group = item.groupName == "root/" ? "/" : item.groupName;
             string folder = assetFolder.Replace("\\", "/");
             string pngpath = $"{folder}{group}{item.pngName}.png".Replace("//", "/");
+            string resolvedPath = PSDAssetDeduper.GetCanonicalPath(
+                pngpath,
+                config != null && config.dedupeSprites,
+                config != null && config.dedupeMoveDuplicates,
+                config != null ? config.dedupeMoveFolder : null,
+                assetFolder);
+            string resolvedAbs = PSDAssetDeduper.GetAbsolutePath(resolvedPath);
 
-            if (File.Exists(pngpath))
+            if (File.Exists(resolvedAbs))
             {
-                var tex = AssetDatabase.LoadAssetAtPath<Texture>(pngpath);
+                var tex = AssetDatabase.LoadAssetAtPath<Texture>(resolvedPath);
                 if (tex != null)
                 {
                     raw.texture = tex;

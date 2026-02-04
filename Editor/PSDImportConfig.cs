@@ -25,6 +25,14 @@ namespace PSDImporter
         [Tooltip("Detect large uniform borders from PNGs and set sprite borders.")]
         public bool autoSlice = false;
 
+        [Header("Asset Deduplication")]
+        [Tooltip("Reuse identical PNGs by content hash when assigning sprites/textures.")]
+        public bool dedupeSprites = false;
+        [Tooltip("Move duplicate PNG files into a subfolder (do not delete).")]
+        public bool dedupeMoveDuplicates = false;
+        [Tooltip("Subfolder name under PSD asset folder for moved duplicates.")]
+        public string dedupeMoveFolder = "_Duplicates";
+
         [Header("Component Overrides (optional)")]
         [Tooltip("Override @Img/@Image component. Must derive from UnityEngine.UI.Image.")]
         public MonoScript imageComponent;
