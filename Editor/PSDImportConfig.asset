@@ -18,4 +18,14 @@ MonoBehaviour:
   weightSize: 0.8
   weightType: 2
   showDetailedLog: 1
-  autoSlice: 1
+  autoSlice: 0
+  dedupeSprites: 1
+  dedupeMoveDuplicates: 1
+  dedupeMoveFolder: _Duplicates
+  imageComponent: {fileID: 0}
+  rawImageComponent: {fileID: 0}
+  buttonComponent: {fileID: 0}
+  textComponent: {fileID: 0}
+  horizontalLayoutComponent: {fileID: 0}
+  verticalLayoutComponent: {fileID: 0}
+  gridLayoutComponent: {fileID: 0}

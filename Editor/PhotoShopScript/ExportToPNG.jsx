@@ -132,6 +132,8 @@ function run() {
 
             for (var i = skinLayers.length - 1; i >= 0; i--) {
                 var layer = skinLayers[i];
+                var sourceLayer = layer;
+                var sourceLayerId = layer.id;
                 var slotName = layerName(layer);
                 
                 // 类型判断
@@ -316,11 +318,11 @@ function run() {
 
                 // JSON
                 var idx = -1;
-                for(var z=0; z<layers.length; z++) { if(layers[z] == layer) { idx = z; break; } }
+                for(var z=0; z<layers.length; z++) { if(layers[z] == sourceLayer) { idx = z; break; } }
                 var index = (layers.length - 1) - idx; 
 
                 var jsonDataItem = '\t\t{"pngname":"' + slotName + '"';
-                jsonDataItem += ',"id":' + layer.id;
+                jsonDataItem += ',"id":' + sourceLayerId;
                 jsonDataItem += ',"index":' + index;
                 jsonDataItem += ',"x":' + x;
                 jsonDataItem += ',"y":' + y;

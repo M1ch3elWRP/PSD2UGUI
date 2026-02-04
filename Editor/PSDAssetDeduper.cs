@@ -9,15 +9,22 @@ namespace PSDImporter
 {
     public static class PSDAssetDeduper
     {
+        private const string MapFileName = "_psd_dedupe_map.tsv";
         private static readonly Dictionary<string, string> HashToPath = new Dictionary<string, string>();
         private static readonly Dictionary<string, string> PathToPath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, string> PersistedPathMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static string currentScope;
+        private static string persistedMapPath;
+        private static bool mapDirty;
 
         public static void Reset()
         {
             HashToPath.Clear();
             PathToPath.Clear();
+            PersistedPathMap.Clear();
             currentScope = null;
+            persistedMapPath = null;
+            mapDirty = false;
         }
 
         public static void EnsureScope(string rootFolder)
@@ -27,6 +34,8 @@ namespace PSDImporter
             {
                 Reset();
                 currentScope = normalized;
+                persistedMapPath = BuildMapPath(normalized);
+                LoadPersistedMap();
             }
         }
 
@@ -46,6 +55,15 @@ namespace PSDImporter
             var absPath = GetAbsolutePath(normalizedPath);
             if (string.IsNullOrEmpty(absPath) || !File.Exists(absPath))
             {
+                if (PersistedPathMap.TryGetValue(normalizedPath, out var mapped))
+                {
+                    var mappedAbs = GetAbsolutePath(mapped);
+                    if (!string.IsNullOrEmpty(mappedAbs) && File.Exists(mappedAbs))
+                    {
+                        PathToPath[normalizedPath] = mapped;
+                        return mapped;
+                    }
+                }
                 PathToPath[normalizedPath] = normalizedPath;
                 return normalizedPath;
             }
@@ -60,7 +78,11 @@ namespace PSDImporter
             if (HashToPath.TryGetValue(hash, out var canonical))
             {
                 PathToPath[normalizedPath] = canonical;
-                if (moveDuplicates) TryMoveDuplicate(normalizedPath, moveFolder, scopeRoot);
+                if (moveDuplicates)
+                {
+                    TryMoveDuplicate(normalizedPath, moveFolder, scopeRoot);
+                    RecordPersistedMapping(normalizedPath, canonical);
+                }
                 return canonical;
             }
 
@@ -98,6 +120,74 @@ namespace PSDImporter
                 return "Assets" + normalized.Substring(dataPath.Length);
             }
             return normalized;
+        }
+
+        private static string BuildMapPath(string scopeRoot)
+        {
+            if (string.IsNullOrEmpty(scopeRoot)) return null;
+            var normalized = NormalizeAssetPath(scopeRoot);
+            var absRoot = GetAbsolutePath(normalized);
+            if (string.IsNullOrEmpty(absRoot)) return null;
+            return Path.Combine(absRoot, MapFileName).Replace("\\", "/");
+        }
+
+        private static void LoadPersistedMap()
+        {
+            PersistedPathMap.Clear();
+            if (string.IsNullOrEmpty(persistedMapPath) || !File.Exists(persistedMapPath)) return;
+
+            try
+            {
+                var lines = File.ReadAllLines(persistedMapPath);
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    var line = lines[i];
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    if (line.StartsWith("#")) continue;
+                    var parts = line.Split('\t');
+                    if (parts.Length < 2) continue;
+                    var src = NormalizeAssetPath(parts[0].Trim());
+                    var dst = NormalizeAssetPath(parts[1].Trim());
+                    if (!PersistedPathMap.ContainsKey(src)) PersistedPathMap.Add(src, dst);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[PSDAssetDeduper] Load map failed: {persistedMapPath} ({ex.Message})");
+            }
+        }
+
+        private static void RecordPersistedMapping(string sourcePath, string canonicalPath)
+        {
+            if (string.IsNullOrEmpty(persistedMapPath)) return;
+            var src = NormalizeAssetPath(sourcePath);
+            var dst = NormalizeAssetPath(canonicalPath);
+            if (string.IsNullOrEmpty(src) || string.IsNullOrEmpty(dst)) return;
+            PersistedPathMap[src] = dst;
+            mapDirty = true;
+            SavePersistedMap();
+        }
+
+        private static void SavePersistedMap()
+        {
+            if (!mapDirty) return;
+            if (string.IsNullOrEmpty(persistedMapPath)) return;
+            try
+            {
+                var dir = Path.GetDirectoryName(persistedMapPath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                var lines = new List<string> { "# PSDTools Dedupe Map v1 (src<TAB>canonical)" };
+                foreach (var pair in PersistedPathMap)
+                {
+                    lines.Add(pair.Key + "\t" + pair.Value);
+                }
+                File.WriteAllLines(persistedMapPath, lines.ToArray());
+                mapDirty = false;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[PSDAssetDeduper] Save map failed: {persistedMapPath} ({ex.Message})");
+            }
         }
 
         private static void TryMoveDuplicate(string assetPath, string moveFolder, string scopeRoot)

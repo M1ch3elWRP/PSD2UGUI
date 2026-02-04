@@ -507,6 +507,7 @@ namespace PSDImporter
         private void RunAutoMatch()
         {
             if (targetRoot == null || bindings.Count == 0) return;
+            var matchConfig = config ?? ScriptableObject.CreateInstance<PSDImportConfig>();
             HashSet<Transform> occupiedNodes = new HashSet<Transform>();
             HashSet<BindingPairViewModel> matchedBindings = new HashSet<BindingPairViewModel>();
             foreach (var bind in bindings)
@@ -526,7 +527,7 @@ namespace PSDImporter
                 {
                     if (node == targetRoot.transform) continue;
                     if (occupiedNodes.Contains(node)) continue;
-                    float score = PSDMatchingStrategy.CalculateMatchScore(bind.psdItem, node, targetWorldPos, config);
+                    float score = PSDMatchingStrategy.CalculateMatchScore(bind.psdItem, node, targetWorldPos, matchConfig);
                     if (score > 1f) candidates.Add(new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f });
                 }
                 if (bindingAsset != null)

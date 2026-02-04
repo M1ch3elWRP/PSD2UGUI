@@ -96,7 +96,7 @@ namespace PSDImporter
 
             // 解析 ID (确保 JS 脚本导出了 id 字段)
             if (jodata["id"] != null) data.id = (int)jodata["id"];
-            else data.id = data.pngName.GetHashCode(); // 兜底：如果没有ID，用名字哈希
+            else data.id = StableHash32(data.pngName); // 兜底：稳定哈希
 
             data.index = (int)jodata["index"];
             data.x = (float)jodata["x"];
@@ -221,7 +221,6 @@ namespace PSDImporter
                 data.y = canvasHeight - data.y;
             }
 
-            data.layoutType = "None";
             if (rawName.EndsWith("@H", StringComparison.OrdinalIgnoreCase) || rawName.EndsWith("@HLayout", StringComparison.OrdinalIgnoreCase))
             {
                 data.layoutType = "Horizontal";
@@ -260,6 +259,21 @@ namespace PSDImporter
             }
 
             return data;
+        }
+
+        private static int StableHash32(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return 0;
+            unchecked
+            {
+                uint hash = 2166136261;
+                for (int i = 0; i < value.Length; i++)
+                {
+                    hash ^= value[i];
+                    hash *= 16777619;
+                }
+                return (int)hash;
+            }
         }
 
         public static bool IsSelectionPSData()

@@ -332,6 +332,7 @@ namespace PSDImporter
         {
             RectTransform rt = target.GetComponent<RectTransform>();
             if (rt == null) return;
+            RectTransform parentRt = target.parent as RectTransform;
 
             // 1. 计算 PSD 几何中心在世界坐标的位置
             float psdCenterX = item.x - psdData.width * 0.5f;
@@ -344,7 +345,16 @@ namespace PSDImporter
             Vector3 worldPivotOffset = target.TransformVector(new Vector3(pivotOffsetX, pivotOffsetY, 0));
 
             // 3. 应用
-            target.position = worldCenterPos + worldPivotOffset;
+            Vector3 worldPos = worldCenterPos + worldPivotOffset;
+            if (parentRt == null)
+            {
+                target.position = worldPos;
+            }
+            else
+            {
+                Vector3 localPos = parentRt.InverseTransformPoint(worldPos);
+                SetAnchoredPositionFromLocal(rt, parentRt, localPos);
+            }
         }
 
         private static void ApplyPsdPositionLocal(Transform target, PicData item, PicData parentItem)
@@ -367,7 +377,25 @@ namespace PSDImporter
                 localY - parentPivotOffsetY + pivotOffsetY,
                 rt.localPosition.z);
 
-            rt.localPosition = localPos;
+            SetAnchoredPositionFromLocal(rt, parentRt, localPos);
+        }
+
+        private static void SetAnchoredPositionFromLocal(RectTransform rt, RectTransform parentRt, Vector3 localPos)
+        {
+            if (rt == null || parentRt == null)
+            {
+                if (rt != null) rt.localPosition = localPos;
+                return;
+            }
+
+            Vector2 parentSize = parentRt.rect.size;
+            Vector2 anchorRef = (rt.anchorMin + rt.anchorMax) * 0.5f;
+            Vector2 anchorOffset = Vector2.Scale(anchorRef - parentRt.pivot, parentSize);
+            Vector2 anchoredPos = new Vector2(localPos.x, localPos.y) - anchorOffset;
+            rt.anchoredPosition = anchoredPos;
+
+            var lp = rt.localPosition;
+            rt.localPosition = new Vector3(lp.x, lp.y, localPos.z);
         }
 
         private static bool IsChildOfLayoutItemContainer(Transform t)
