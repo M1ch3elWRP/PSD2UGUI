@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -7,6 +6,8 @@ using System.Text;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityObject = UnityEngine.Object;
+using System;
 
 namespace PSDImporter
 {
@@ -32,7 +33,7 @@ namespace PSDImporter
     public class VisualBindingWindow : EditorWindow
     {
         // --- 资源引用 ---
-        private Object psdDataFile;
+        private UnityObject psdDataFile;
         private GameObject targetRoot;
         private PSDImportConfig config;
         private enum ImportMode { Create, Restore }
@@ -227,7 +228,6 @@ namespace PSDImporter
 
             // 交互区域 Rect (本地坐标)
             DrawLegend();
-            DrawStatusPanel(w);
             Rect localRect = new Rect(0, 0, w, h);
 
             if (cachedPsdData != null)
@@ -248,6 +248,7 @@ namespace PSDImporter
             }
 
             // Zoom 信息
+            DrawStatusPanel(w);
             EditorGUI.LabelField(new Rect(5, h - 20, 100, 20), $"Zoom: {previewZoom:P0}", EditorStyles.miniLabel);
         }
 
@@ -408,7 +409,7 @@ namespace PSDImporter
                 if (Event.current.type == EventType.MouseDrag && rowRect.Contains(Event.current.mousePosition))
                 {
                     DragAndDrop.PrepareStartDrag();
-                    DragAndDrop.objectReferences = new Object[] { node.transform.gameObject };
+                    DragAndDrop.objectReferences = new UnityObject[] { node.transform.gameObject };
                     DragAndDrop.StartDrag("Drag Prefab Node");
                     Event.current.Use();
                 }
@@ -441,7 +442,7 @@ namespace PSDImporter
             }
             GUILayout.Space(6);
             GUILayout.Label("PSD Data", GUILayout.Width(50));
-            psdDataFile = EditorGUILayout.ObjectField(psdDataFile, typeof(Object), false, GUILayout.Width(150));
+            psdDataFile = EditorGUILayout.ObjectField(psdDataFile, typeof(UnityObject), false, GUILayout.Width(150));
             if (importMode == ImportMode.Restore)
             {
                 GUILayout.Space(10);
