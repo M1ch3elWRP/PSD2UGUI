@@ -94,9 +94,6 @@ namespace PSDImporter
         [Tooltip("Model JSON path (absolute or Assets-relative).")]
         public string autoLearnModelPath = "Assets/PSDTools/ML/psd_match_model.json";
 
-        [Tooltip("Record the first N unique screens before auto-updating the model.")]
-        public int autoLearnWarmupScreens = 10;
-
         [Tooltip("Negative samples per positive sample.")]
         public int autoLearnNegativePerPositive = 3;
 

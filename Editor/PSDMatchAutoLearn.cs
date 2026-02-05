@@ -81,13 +81,6 @@ namespace PSDImporter
 
             SaveDataset(datasetPath, dataset);
 
-            int warmup = Mathf.Max(0, config.autoLearnWarmupScreens);
-            if (dataset.screenIds.Length < warmup)
-            {
-                Debug.Log($"[MatchML] Recorded screen {dataset.screenIds.Length}/{warmup}. Waiting for warmup.");
-                return;
-            }
-
             var options = new PSDMatchTrainingOptions
             {
                 epochs = Mathf.Max(1, config.autoLearnEpochsPerUpdate),
