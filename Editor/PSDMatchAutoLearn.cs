@@ -11,6 +11,24 @@ namespace PSDImporter
         private static bool warnedMissingDataset;
         private static bool warnedMissingModel;
 
+        public static int TryGetDatasetScreenCount(PSDImportConfig config)
+        {
+            if (config == null) return 0;
+            string datasetPath = ResolvePath(config.autoLearnDatasetPath);
+            if (string.IsNullOrEmpty(datasetPath)) return 0;
+            if (!File.Exists(datasetPath)) return 0;
+            try
+            {
+                string json = File.ReadAllText(datasetPath);
+                var dataset = JsonUtility.FromJson<PSDMatchDataset>(json);
+                return dataset?.screenIds?.Length ?? 0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
         public static PSDMatchModel TryLoadModel(PSDImportConfig config)
         {
             if (config == null) return null;

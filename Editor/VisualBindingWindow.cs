@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -63,6 +65,9 @@ namespace PSDImporter
         private PSDMatchModel statusMlModel;
         private string statusMlModelPath;
         private double statusMlModelNextCheck;
+        private int statusDatasetScreenCount;
+        private string statusDatasetPath;
+        private double statusDatasetNextCheck;
 
         // 拖拽状态
         private bool isResizingPreview = false;
@@ -1046,8 +1051,8 @@ namespace PSDImporter
 
         private void DrawStatusPanel(float viewWidth)
         {
-            const float panelW = 300f;
-            const float panelH = 88f;
+            const float panelW = 320f;
+            const float panelH = 108f;
             float x = Mathf.Max(6f, viewWidth - panelW - 6f);
             float y = 6f;
             Rect panelRect = new Rect(x, y, panelW, panelH);
@@ -1062,25 +1067,30 @@ namespace PSDImporter
             GUI.Label(new Rect(lineX, lineY, lineW, 16f), "Status", EditorStyles.boldLabel);
             lineY += 18f;
 
-            int total = bindings != null ? bindings.Count : 0;
-            int matched = bindings != null ? bindings.Count(b => b.unityNode != null) : 0;
-            int confirmed = bindings != null ? bindings.Count(b => b.isConfirmed) : 0;
-            GUI.Label(new Rect(lineX, lineY, lineW, 16f), $"Items: {total}  Matched: {matched}  Confirmed: {confirmed}", EditorStyles.miniLabel);
-            lineY += 16f;
-
-            if (config != null)
-            {
-                GUI.Label(new Rect(lineX, lineY, lineW, 16f),
-                    $"Manual W: Pos={config.weightPosition:F2} Size={config.weightSize:F2} Type={config.weightType:F2}",
-                    EditorStyles.miniLabel);
-            }
-            else
-            {
-                GUI.Label(new Rect(lineX, lineY, lineW, 16f), "Manual W: n/a", EditorStyles.miniLabel);
-            }
+            int screenCount = GetStatusScreenCount();
+            GUI.Label(new Rect(lineX, lineY, lineW, 16f), $"Screens: {screenCount}", EditorStyles.miniLabel);
             lineY += 16f;
 
             PSDMatchModel model = GetStatusModel();
+            string updatedAt = "n/a";
+            if (model != null && !string.IsNullOrEmpty(model.trainedAtUtc))
+            {
+                if (DateTime.TryParse(model.trainedAtUtc, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var utc))
+                {
+                    updatedAt = utc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+                }
+                else
+                {
+                    updatedAt = model.trainedAtUtc;
+                }
+            }
+            GUI.Label(new Rect(lineX, lineY, lineW, 16f), $"Model Updated: {updatedAt}", EditorStyles.miniLabel);
+            lineY += 16f;
+
+            string acc = model != null ? model.trainingAccuracy.ToString("P1") : "n/a";
+            GUI.Label(new Rect(lineX, lineY, lineW, 16f), $"Train Acc: {acc}", EditorStyles.miniLabel);
+            lineY += 16f;
+
             if (model != null && model.weights != null && model.weights.Length >= 3)
             {
                 GUI.Label(new Rect(lineX, lineY, lineW, 16f),
@@ -1112,6 +1122,27 @@ namespace PSDImporter
             }
 
             return statusMlModel;
+        }
+
+        private int GetStatusScreenCount()
+        {
+            if (config == null) return 0;
+            if (string.IsNullOrEmpty(config.autoLearnDatasetPath)) return 0;
+
+            if (statusDatasetPath != config.autoLearnDatasetPath)
+            {
+                statusDatasetPath = config.autoLearnDatasetPath;
+                statusDatasetScreenCount = 0;
+                statusDatasetNextCheck = 0;
+            }
+
+            if (EditorApplication.timeSinceStartup >= statusDatasetNextCheck)
+            {
+                statusDatasetScreenCount = PSDMatchAutoLearn.TryGetDatasetScreenCount(config);
+                statusDatasetNextCheck = EditorApplication.timeSinceStartup + 1.0;
+            }
+
+            return statusDatasetScreenCount;
         }
 
         private void DrawOutline(Rect r, Color c, float w = 1)
