@@ -75,5 +75,9 @@ namespace PSDImporter
 
         [Tooltip("Override @G layout group. Must derive from UnityEngine.UI.GridLayoutGroup.")]
         public MonoScript gridLayoutComponent;
+
+        [Header("Matching Filters")]
+        [Tooltip("When enabled, inactive prefab nodes are ignored during auto match.")]
+        public bool skipInactiveMatch = false;
     }
 }

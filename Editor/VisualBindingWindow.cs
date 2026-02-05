@@ -568,6 +568,7 @@ namespace PSDImporter
                 {
                     if (node == targetRoot.transform) continue;
                     if (occupiedNodes.Contains(node)) continue;
+                    if (matchConfig != null && matchConfig.skipInactiveMatch && !node.gameObject.activeInHierarchy) continue;
                     float score = PSDMatchingStrategy.CalculateMatchScore(bind.psdItem, node, targetWorldPos, matchConfig);
                     if (score > 1f) candidates.Add(new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f });
                 }

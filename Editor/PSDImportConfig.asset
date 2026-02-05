@@ -21,7 +21,12 @@ MonoBehaviour:
   autoSlice: 0
   dedupeSprites: 1
   dedupeMoveDuplicates: 1
-  dedupeMoveFolder: _Duplicates
+  dedupeMoveFolder: Duplicates
+  commonSpriteMatch: 0
+  commonSpriteFolders: []
+  commonSpritePerceptualThreshold: 8
+  commonSpriteMoveMatched: 1
+  commonSpriteMoveFolder: CommonMatched
   imageComponent: {fileID: 0}
   rawImageComponent: {fileID: 0}
   buttonComponent: {fileID: 0}

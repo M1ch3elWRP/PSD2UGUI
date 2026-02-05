@@ -96,6 +96,7 @@ namespace PSDImporter
             {
                 if (node == root) continue;
                 if (occupiedNodes != null && occupiedNodes.Contains(node.transform)) continue;
+                if (config != null && config.skipInactiveMatch && !node.gameObject.activeInHierarchy) continue;
 
                 // 【调用核心算法】
                 float totalScore = CalculateMatchScore(item, node, targetWorldPos, config);
