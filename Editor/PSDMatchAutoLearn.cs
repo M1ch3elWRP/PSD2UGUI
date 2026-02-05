@@ -11,10 +11,10 @@ namespace PSDImporter
         private static bool warnedMissingDataset;
         private static bool warnedMissingModel;
 
-        public static int TryGetDatasetScreenCount(PSDImportConfig config)
+        public static int TryGetDatasetScreenCount(PSDMatchMLConfig config)
         {
             if (config == null) return 0;
-            string datasetPath = ResolvePath(config.autoLearnDatasetPath);
+            string datasetPath = ResolvePath(config.datasetPath);
             if (string.IsNullOrEmpty(datasetPath)) return 0;
             if (!File.Exists(datasetPath)) return 0;
             try
@@ -29,36 +29,36 @@ namespace PSDImporter
             }
         }
 
-        public static PSDMatchModel TryLoadModel(PSDImportConfig config)
+        public static PSDMatchModel TryLoadModel(PSDMatchMLConfig config)
         {
             if (config == null) return null;
-            string modelPath = ResolvePath(config.autoLearnModelPath);
+            string modelPath = ResolvePath(config.modelPath);
             if (string.IsNullOrEmpty(modelPath)) return null;
             if (!File.Exists(modelPath)) return null;
             string json = File.ReadAllText(modelPath);
             return JsonUtility.FromJson<PSDMatchModel>(json);
         }
 
-        public static void RecordAndMaybeTrain(string psdDataPath, PSDData psdData, Transform root, List<BindingPairViewModel> bindings, PSDImportConfig config)
+        public static void RecordAndMaybeTrain(string psdDataPath, PSDData psdData, Transform root, List<BindingPairViewModel> bindings, PSDImportConfig matchConfig, PSDMatchMLConfig mlConfig)
         {
-            if (config == null || !config.autoLearnEnabled) return;
+            if (mlConfig == null || !mlConfig.autoLearnEnabled) return;
             if (psdData == null || root == null || bindings == null || bindings.Count == 0) return;
 
-            string datasetPath = ResolvePath(config.autoLearnDatasetPath);
+            string datasetPath = ResolvePath(mlConfig.datasetPath);
             if (string.IsNullOrEmpty(datasetPath))
             {
                 WarnOnce(ref warnedMissingDataset, "[MatchML] AutoLearn disabled: dataset path is empty.");
                 return;
             }
 
-            string modelPath = ResolvePath(config.autoLearnModelPath);
+            string modelPath = ResolvePath(mlConfig.modelPath);
             if (string.IsNullOrEmpty(modelPath))
             {
                 WarnOnce(ref warnedMissingModel, "[MatchML] AutoLearn disabled: model path is empty.");
                 return;
             }
 
-            var dataset = LoadDataset(datasetPath, config);
+            var dataset = LoadDataset(datasetPath, matchConfig, mlConfig);
             if (dataset == null) return;
             if (dataset.featureCount != PSDMatchFeatureExtractor.FeatureCount)
             {
@@ -70,20 +70,21 @@ namespace PSDImporter
             if (string.IsNullOrEmpty(screenId)) screenId = Guid.NewGuid().ToString("N");
 
             var screenSet = new HashSet<string>(dataset.screenIds ?? new string[0]);
-            if (screenSet.Contains(screenId))
+            bool alreadyRecorded = screenSet.Contains(screenId);
+            if (alreadyRecorded && !mlConfig.allowRepeatScreens)
             {
                 Debug.Log($"[MatchML] Screen already recorded: {screenId}");
                 return;
             }
 
-            var nodes = CollectCandidateNodes(root, config);
+            var nodes = CollectCandidateNodes(root, matchConfig);
             if (nodes.Count == 0)
             {
                 Debug.LogWarning("[MatchML] No candidate nodes found. Skip auto learn.");
                 return;
             }
 
-            var newSamples = BuildSamples(psdData, root, bindings, nodes, dataset, config);
+            var newSamples = BuildSamples(psdData, root, bindings, nodes, dataset, matchConfig, mlConfig, screenId);
             if (newSamples.Count == 0)
             {
                 Debug.LogWarning("[MatchML] No samples collected. Skip auto learn.");
@@ -91,19 +92,30 @@ namespace PSDImporter
             }
 
             var sampleList = new List<PSDMatchSample>(dataset.samples ?? new PSDMatchSample[0]);
+            if (alreadyRecorded && mlConfig.allowRepeatScreens)
+            {
+                int removed = sampleList.RemoveAll(s => s != null && s.screenId == screenId);
+                if (removed > 0)
+                {
+                    Debug.Log($"[MatchML] Replacing samples for screen: {screenId} (removed {removed})");
+                }
+            }
             sampleList.AddRange(newSamples);
             dataset.samples = sampleList.ToArray();
 
-            screenSet.Add(screenId);
-            dataset.screenIds = new List<string>(screenSet).ToArray();
+            if (!alreadyRecorded)
+            {
+                screenSet.Add(screenId);
+                dataset.screenIds = new List<string>(screenSet).ToArray();
+            }
 
             SaveDataset(datasetPath, dataset);
 
             var options = new PSDMatchTrainingOptions
             {
-                epochs = Mathf.Max(1, config.autoLearnEpochsPerUpdate),
-                learningRate = Mathf.Max(0.0001f, config.autoLearnLearningRate),
-                l2 = Mathf.Max(0f, config.autoLearnL2)
+                epochs = Mathf.Max(1, mlConfig.epochsPerUpdate),
+                learningRate = Mathf.Max(0.0001f, mlConfig.learningRate),
+                l2 = Mathf.Max(0f, mlConfig.l2)
             };
 
             PSDMatchTrainingReport report;
@@ -121,7 +133,7 @@ namespace PSDImporter
             Debug.Log($"[MatchML] Model updated. Samples={report.sampleCount}, Loss={report.loss:F4}, Acc={report.accuracy:P1}");
         }
 
-        private static List<RectTransform> CollectCandidateNodes(Transform root, PSDImportConfig config)
+        private static List<RectTransform> CollectCandidateNodes(Transform root, PSDImportConfig matchConfig)
         {
             var list = new List<RectTransform>();
             var all = root.GetComponentsInChildren<RectTransform>(true);
@@ -129,22 +141,22 @@ namespace PSDImporter
             {
                 var node = all[i];
                 if (node == root) continue;
-                if (config.skipInactiveMatch && !node.gameObject.activeInHierarchy) continue;
+                if (matchConfig != null && matchConfig.skipInactiveMatch && !node.gameObject.activeInHierarchy) continue;
                 list.Add(node);
             }
             return list;
         }
 
-        private static List<PSDMatchSample> BuildSamples(PSDData psdData, Transform root, List<BindingPairViewModel> bindings, List<RectTransform> nodes, PSDMatchDataset dataset, PSDImportConfig config)
+        private static List<PSDMatchSample> BuildSamples(PSDData psdData, Transform root, List<BindingPairViewModel> bindings, List<RectTransform> nodes, PSDMatchDataset dataset, PSDImportConfig matchConfig, PSDMatchMLConfig mlConfig, string screenId)
         {
             var samples = new List<PSDMatchSample>();
-            int negativePerPositive = Mathf.Max(0, config.autoLearnNegativePerPositive);
+            int negativePerPositive = mlConfig != null ? Mathf.Max(0, mlConfig.negativePerPositive) : 0;
 
             for (int i = 0; i < bindings.Count; i++)
             {
                 var bind = bindings[i];
                 if (bind == null || bind.psdItem.pngName == null) continue;
-                if (config.autoLearnRequireConfirmed && !(bind.isConfirmed || bind.isIdMatched)) continue;
+                if (mlConfig != null && mlConfig.requireConfirmed && !(bind.isConfirmed || bind.isIdMatched)) continue;
                 if (bind.unityNode == null) continue;
 
                 var positiveNode = bind.unityNode as RectTransform;
@@ -165,7 +177,8 @@ namespace PSDImporter
                     x = posX,
                     y = 1,
                     item = bind.psdItem.pngName,
-                    node = GetTransformPath(positiveNode)
+                    node = GetTransformPath(positiveNode),
+                    screenId = screenId
                 });
 
                 if (negativePerPositive <= 0) continue;
@@ -201,7 +214,8 @@ namespace PSDImporter
                         x = neg.x,
                         y = 0,
                         item = bind.psdItem.pngName,
-                        node = GetTransformPath(neg.node)
+                        node = GetTransformPath(neg.node),
+                        screenId = screenId
                     });
                 }
             }
@@ -209,7 +223,7 @@ namespace PSDImporter
             return samples;
         }
 
-        private static PSDMatchDataset LoadDataset(string path, PSDImportConfig config)
+        private static PSDMatchDataset LoadDataset(string path, PSDImportConfig matchConfig, PSDMatchMLConfig mlConfig)
         {
             if (File.Exists(path))
             {
@@ -218,9 +232,9 @@ namespace PSDImporter
                 if (dataset != null)
                 {
                     if (dataset.featureCount <= 0) dataset.featureCount = PSDMatchFeatureExtractor.FeatureCount;
-                    if (dataset.maxDistanceError <= 0f) dataset.maxDistanceError = config.maxDistanceError;
-                    if (dataset.maxSizeDiff <= 0f) dataset.maxSizeDiff = config.maxSizeDiff;
-                    if (dataset.maxDepthDiff <= 0) dataset.maxDepthDiff = config.autoLearnMaxDepthDiff;
+                    if (dataset.maxDistanceError <= 0f) dataset.maxDistanceError = matchConfig != null ? matchConfig.maxDistanceError : dataset.maxDistanceError;
+                    if (dataset.maxSizeDiff <= 0f) dataset.maxSizeDiff = matchConfig != null ? matchConfig.maxSizeDiff : dataset.maxSizeDiff;
+                    if (dataset.maxDepthDiff <= 0) dataset.maxDepthDiff = mlConfig != null ? mlConfig.maxDepthDiff : dataset.maxDepthDiff;
                     if (dataset.screenIds == null) dataset.screenIds = new string[0];
                     if (dataset.samples == null) dataset.samples = new PSDMatchSample[0];
                     return dataset;
@@ -230,9 +244,9 @@ namespace PSDImporter
             return new PSDMatchDataset
             {
                 featureCount = PSDMatchFeatureExtractor.FeatureCount,
-                maxDistanceError = config.maxDistanceError,
-                maxSizeDiff = config.maxSizeDiff,
-                maxDepthDiff = config.autoLearnMaxDepthDiff,
+                maxDistanceError = matchConfig != null ? matchConfig.maxDistanceError : 200f,
+                maxSizeDiff = matchConfig != null ? matchConfig.maxSizeDiff : 100f,
+                maxDepthDiff = mlConfig != null ? mlConfig.maxDepthDiff : 10,
                 screenIds = new string[0],
                 samples = new PSDMatchSample[0]
             };

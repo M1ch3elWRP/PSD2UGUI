@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f53c18435b554058b8b511bc29b2e097, type: 3}
+  m_Name: PSDMatchMLConfig
+  m_EditorClassIdentifier: 
+  autoLearnEnabled: 1
+  allowRepeatScreens: 0
+  datasetPath: Assets/PSDTools/ML/psd_match_dataset.json
+  modelPath: Assets/PSDTools/ML/psd_match_model.json
+  negativePerPositive: 3
+  epochsPerUpdate: 30
+  learningRate: 0.05
+  l2: 0.0001
+  requireConfirmed: 1
+  maxDepthDiff: 10
+  useMlScore: 0

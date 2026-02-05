@@ -9,6 +9,7 @@ namespace PSDImporter
         public int y;
         public string item;
         public string node;
+        public string screenId;
     }
 
     [Serializable]

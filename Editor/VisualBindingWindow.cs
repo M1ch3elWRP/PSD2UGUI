@@ -589,11 +589,12 @@ namespace PSDImporter
             bool logDetail = matchConfig != null && matchConfig.showDetailedLog;
             bool forceCandidateLog = matchConfig != null && matchConfig.forceCandidateLog;
             bool logCandidatesInLoop = logDetail && !forceCandidateLog;
-            bool useMlScore = matchConfig != null && matchConfig.useMlScore;
+            var mlConfig = matchConfig != null ? matchConfig.mlConfig : null;
+            bool useMlScore = mlConfig != null && mlConfig.useMlScore;
             PSDMatchModel mlModel = null;
             if (useMlScore)
             {
-                mlModel = PSDMatchAutoLearn.TryLoadModel(matchConfig);
+                mlModel = PSDMatchAutoLearn.TryLoadModel(mlConfig);
                 if (mlModel == null)
                 {
                     useMlScore = false;
@@ -872,10 +873,11 @@ namespace PSDImporter
 
             ShowNotification(new GUIContent($"完成! ({count} 节点)"));
             UpdatePrefabStatus();
-            if (config != null && config.autoLearnEnabled)
+            var mlConfig = config != null ? config.mlConfig : null;
+            if (mlConfig != null && mlConfig.autoLearnEnabled)
             {
                 string psdPath = psdDataFile != null ? AssetDatabase.GetAssetPath(psdDataFile) : null;
-                PSDMatchAutoLearn.RecordAndMaybeTrain(psdPath, cachedPsdData, targetRoot.transform, bindings, config);
+                PSDMatchAutoLearn.RecordAndMaybeTrain(psdPath, cachedPsdData, targetRoot.transform, bindings, config, mlConfig);
             }
         }
 
@@ -997,7 +999,7 @@ namespace PSDImporter
 
             float maxDist = mlModel.maxDistanceError > 0f ? mlModel.maxDistanceError : config.maxDistanceError;
             float maxSize = mlModel.maxSizeDiff > 0f ? mlModel.maxSizeDiff : config.maxSizeDiff;
-            int maxDepth = mlModel.maxDepthDiff > 0 ? mlModel.maxDepthDiff : config.autoLearnMaxDepthDiff;
+            int maxDepth = mlModel.maxDepthDiff > 0 ? mlModel.maxDepthDiff : (config != null && config.mlConfig != null ? config.mlConfig.maxDepthDiff : 10);
 
             float[] x = PSDMatchFeatureExtractor.ExtractFeatures(item, node, targetRoot.transform, cachedPsdData.width, cachedPsdData.height, maxDist, maxSize, maxDepth);
             float prob = PSDMatchML.Predict(mlModel, x);
@@ -1106,19 +1108,19 @@ namespace PSDImporter
 
         private PSDMatchModel GetStatusModel()
         {
-            if (config == null) return null;
-            if (string.IsNullOrEmpty(config.autoLearnModelPath)) return null;
+            if (config == null || config.mlConfig == null) return null;
+            if (string.IsNullOrEmpty(config.mlConfig.modelPath)) return null;
 
-            if (statusMlModelPath != config.autoLearnModelPath)
+            if (statusMlModelPath != config.mlConfig.modelPath)
             {
-                statusMlModelPath = config.autoLearnModelPath;
+                statusMlModelPath = config.mlConfig.modelPath;
                 statusMlModel = null;
                 statusMlModelNextCheck = 0;
             }
 
             if (EditorApplication.timeSinceStartup >= statusMlModelNextCheck)
             {
-                statusMlModel = PSDMatchAutoLearn.TryLoadModel(config);
+                statusMlModel = PSDMatchAutoLearn.TryLoadModel(config.mlConfig);
                 statusMlModelNextCheck = EditorApplication.timeSinceStartup + 1.0;
             }
 
@@ -1127,19 +1129,19 @@ namespace PSDImporter
 
         private int GetStatusScreenCount()
         {
-            if (config == null) return 0;
-            if (string.IsNullOrEmpty(config.autoLearnDatasetPath)) return 0;
+            if (config == null || config.mlConfig == null) return 0;
+            if (string.IsNullOrEmpty(config.mlConfig.datasetPath)) return 0;
 
-            if (statusDatasetPath != config.autoLearnDatasetPath)
+            if (statusDatasetPath != config.mlConfig.datasetPath)
             {
-                statusDatasetPath = config.autoLearnDatasetPath;
+                statusDatasetPath = config.mlConfig.datasetPath;
                 statusDatasetScreenCount = 0;
                 statusDatasetNextCheck = 0;
             }
 
             if (EditorApplication.timeSinceStartup >= statusDatasetNextCheck)
             {
-                statusDatasetScreenCount = PSDMatchAutoLearn.TryGetDatasetScreenCount(config);
+                statusDatasetScreenCount = PSDMatchAutoLearn.TryGetDatasetScreenCount(config.mlConfig);
                 statusDatasetNextCheck = EditorApplication.timeSinceStartup + 1.0;
             }
 
