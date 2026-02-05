@@ -558,6 +558,8 @@ namespace PSDImporter
             public float weightedType;
             public float total;
             public bool passThresholds;
+            public float mlProb;
+            public bool mlUsed;
         }
 
         private class MatchCandidate
@@ -576,11 +578,23 @@ namespace PSDImporter
             bool logDetail = matchConfig != null && matchConfig.showDetailedLog;
             bool forceCandidateLog = matchConfig != null && matchConfig.forceCandidateLog;
             bool logCandidatesInLoop = logDetail && !forceCandidateLog;
+            bool useMlScore = matchConfig != null && matchConfig.useMlScore;
+            PSDMatchModel mlModel = null;
+            if (useMlScore)
+            {
+                mlModel = PSDMatchAutoLearn.TryLoadModel(matchConfig);
+                if (mlModel == null)
+                {
+                    useMlScore = false;
+                    if (logDetail) Debug.LogWarning("[Match] ML model not found. Fallback to manual weights.");
+                }
+            }
+            float perfectThreshold = useMlScore ? 80f : 150f;
             HashSet<Transform> occupiedNodes = new HashSet<Transform>();
             HashSet<BindingPairViewModel> matchedBindings = new HashSet<BindingPairViewModel>();
             if (logDetail)
             {
-                Debug.Log($"[Match] Config maxDist={matchConfig.maxDistanceError:F1}, maxSizeDiff={matchConfig.maxSizeDiff:F1}, weightPos={matchConfig.weightPosition:F2}, weightSize={matchConfig.weightSize:F2}, weightType={matchConfig.weightType:F2}, skipInactive={matchConfig.skipInactiveMatch}, forceCandidateLog={forceCandidateLog}");
+                Debug.Log($"[Match] Config maxDist={matchConfig.maxDistanceError:F1}, maxSizeDiff={matchConfig.maxSizeDiff:F1}, weightPos={matchConfig.weightPosition:F2}, weightSize={matchConfig.weightSize:F2}, weightType={matchConfig.weightType:F2}, skipInactive={matchConfig.skipInactiveMatch}, forceCandidateLog={forceCandidateLog}, useMlScore={useMlScore}");
             }
             foreach (var bind in bindings)
             {
@@ -650,7 +664,7 @@ namespace PSDImporter
             {
                 foreach (var bind in bindings)
                 {
-                    LogTopCandidatesForBind(bind, nodeListForLog, matchConfig, skippedRootLog, skippedInactiveLog, skippedOccupiedLog);
+                    LogTopCandidatesForBind(bind, nodeListForLog, matchConfig, useMlScore, mlModel, skippedRootLog, skippedInactiveLog, skippedOccupiedLog);
                 }
             }
 
@@ -682,7 +696,7 @@ namespace PSDImporter
                     if (!IsTypeMatch(node, bind.psdItem.uiType)) { skippedType++; continue; }
 
                     ScoreBreakdown breakdown;
-                    float score = CalculateMatchScoreDetailed(bind.psdItem, node, targetWorldPos, matchConfig, out breakdown);
+                    float score = GetMatchScore(bind.psdItem, node, targetWorldPos, matchConfig, useMlScore, mlModel, out breakdown);
                     if (score > 1f)
                     {
                         validMatrix[i, j] = true;
@@ -690,7 +704,7 @@ namespace PSDImporter
                         if (score > maxScore) maxScore = score;
                         if (logCandidatesInLoop)
                         {
-                            var candidate = new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f, breakdown = breakdown };
+                            var candidate = new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > perfectThreshold, breakdown = breakdown };
                             localCandidates.Add(candidate);
                         }
                     }
@@ -708,7 +722,8 @@ namespace PSDImporter
                         var rt = cand.node as RectTransform;
                         float nodeW = rt != null ? rt.rect.width : 0f;
                         float nodeH = rt != null ? rt.rect.height : 0f;
-                        sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}");
+                        string mlInfo = b.mlUsed ? $" mlScore={cand.score:F1} mlProb={b.mlProb:F3}" : string.Empty;
+                        sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
                     }
                     Debug.Log(sb.ToString());
                 }
@@ -755,17 +770,18 @@ namespace PSDImporter
                 bind.score = scoreMatrix[i, j];
                 bind.statusInfo = $"Score: {bind.score:F0}";
                 bind.isIdMatched = false;
-                if (bind.score > 150f) bind.isConfirmed = true;
+                if (bind.score > perfectThreshold) bind.isConfirmed = true;
                 matchedBindings.Add(bind);
                 occupiedNodes.Add(node.transform);
                 if (logDetail)
                 {
                     ScoreBreakdown breakdown;
-                    CalculateMatchScoreDetailed(bind.psdItem, node, targetRoot.transform.TransformPoint(new Vector3(bind.psdItem.x - cachedPsdData.width * 0.5f, bind.psdItem.y - cachedPsdData.height * 0.5f, 0)), matchConfig, out breakdown);
+                    GetMatchScore(bind.psdItem, node, targetRoot.transform.TransformPoint(new Vector3(bind.psdItem.x - cachedPsdData.width * 0.5f, bind.psdItem.y - cachedPsdData.height * 0.5f, 0)), matchConfig, useMlScore, mlModel, out breakdown);
                     var rt = node as RectTransform;
                     float nodeW = rt != null ? rt.rect.width : 0f;
                     float nodeH = rt != null ? rt.rect.height : 0f;
-                    Debug.Log($"[Match] Result {bind.psdItem.pngName} -> {GetTransformPath(node)} score={bind.score:F1} dist={breakdown.distance:F1} diff=({breakdown.diffW:F1},{breakdown.diffH:F1}) nodeSize=({nodeW:F1},{nodeH:F1}) w=({breakdown.weightedPos:F1},{breakdown.weightedSize:F1},{breakdown.weightedType:F1})");
+                    string mlInfo = breakdown.mlUsed ? $" mlScore={bind.score:F1} mlProb={breakdown.mlProb:F3}" : string.Empty;
+                    Debug.Log($"[Match] Result {bind.psdItem.pngName} -> {GetTransformPath(node)} score={bind.score:F1} dist={breakdown.distance:F1} diff=({breakdown.diffW:F1},{breakdown.diffH:F1}) nodeSize=({nodeW:F1},{nodeH:F1}) w=({breakdown.weightedPos:F1},{breakdown.weightedSize:F1},{breakdown.weightedType:F1}){mlInfo}");
                 }
             }
 
@@ -776,7 +792,7 @@ namespace PSDImporter
             UpdatePrefabStatus();
         }
 
-        private void LogTopCandidatesForBind(BindingPairViewModel bind, IList<RectTransform> nodes, PSDImportConfig config, int skippedRoot, int skippedInactive, int skippedOccupied)
+        private void LogTopCandidatesForBind(BindingPairViewModel bind, IList<RectTransform> nodes, PSDImportConfig config, bool useMlScore, PSDMatchModel mlModel, int skippedRoot, int skippedInactive, int skippedOccupied)
         {
             if (bind == null || nodes == null || config == null) return;
 
@@ -792,7 +808,7 @@ namespace PSDImporter
                 if (!IsTypeMatch(node, bind.psdItem.uiType)) { skippedType++; continue; }
 
                 ScoreBreakdown breakdown;
-                float score = CalculateMatchScoreDetailed(bind.psdItem, node, targetWorldPos, config, out breakdown);
+                float score = GetMatchScore(bind.psdItem, node, targetWorldPos, config, useMlScore, mlModel, out breakdown);
                 if (score > 1f)
                 {
                     localCandidates.Add(new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f, breakdown = breakdown });
@@ -809,7 +825,8 @@ namespace PSDImporter
                 var rt = cand.node as RectTransform;
                 float nodeW = rt != null ? rt.rect.width : 0f;
                 float nodeH = rt != null ? rt.rect.height : 0f;
-                sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}");
+                string mlInfo = b.mlUsed ? $" mlScore={cand.score:F1} mlProb={b.mlProb:F3}" : string.Empty;
+                sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
             }
             Debug.Log(sb.ToString());
         }
@@ -958,6 +975,27 @@ namespace PSDImporter
             breakdown.passThresholds = pass;
 
             return total;
+        }
+
+        private float GetMatchScore(PicData item, RectTransform node, Vector3 targetWorldPos, PSDImportConfig config, bool useMlScore, PSDMatchModel mlModel, out ScoreBreakdown breakdown)
+        {
+            if (!useMlScore || mlModel == null)
+            {
+                return CalculateMatchScoreDetailed(item, node, targetWorldPos, config, out breakdown);
+            }
+
+            float maxDist = mlModel.maxDistanceError > 0f ? mlModel.maxDistanceError : config.maxDistanceError;
+            float maxSize = mlModel.maxSizeDiff > 0f ? mlModel.maxSizeDiff : config.maxSizeDiff;
+            int maxDepth = mlModel.maxDepthDiff > 0 ? mlModel.maxDepthDiff : config.autoLearnMaxDepthDiff;
+
+            float[] x = PSDMatchFeatureExtractor.ExtractFeatures(item, node, targetRoot.transform, cachedPsdData.width, cachedPsdData.height, maxDist, maxSize, maxDepth);
+            float prob = PSDMatchML.Predict(mlModel, x);
+            float score = prob * 100f;
+
+            CalculateMatchScoreDetailed(item, node, targetWorldPos, config, out breakdown);
+            breakdown.mlProb = prob;
+            breakdown.mlUsed = true;
+            return score;
         }
 
         private static bool IsTypeMatch(Transform node, string psdType)

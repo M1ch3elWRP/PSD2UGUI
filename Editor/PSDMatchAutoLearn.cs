@@ -11,6 +11,16 @@ namespace PSDImporter
         private static bool warnedMissingDataset;
         private static bool warnedMissingModel;
 
+        public static PSDMatchModel TryLoadModel(PSDImportConfig config)
+        {
+            if (config == null) return null;
+            string modelPath = ResolvePath(config.autoLearnModelPath);
+            if (string.IsNullOrEmpty(modelPath)) return null;
+            if (!File.Exists(modelPath)) return null;
+            string json = File.ReadAllText(modelPath);
+            return JsonUtility.FromJson<PSDMatchModel>(json);
+        }
+
         public static void RecordAndMaybeTrain(string psdDataPath, PSDData psdData, Transform root, List<BindingPairViewModel> bindings, PSDImportConfig config)
         {
             if (config == null || !config.autoLearnEnabled) return;

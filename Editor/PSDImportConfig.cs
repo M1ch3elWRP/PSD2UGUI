@@ -114,5 +114,8 @@ namespace PSDImporter
 
         [Tooltip("Max depth diff used for depth normalization.")]
         public int autoLearnMaxDepthDiff = 10;
+
+        [Tooltip("Use ML model score instead of manual weights when matching.")]
+        public bool useMlScore = false;
     }
 }
