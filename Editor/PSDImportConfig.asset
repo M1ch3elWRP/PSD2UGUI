@@ -35,3 +35,5 @@ MonoBehaviour:
   horizontalLayoutComponent: {fileID: 0}
   verticalLayoutComponent: {fileID: 0}
   gridLayoutComponent: {fileID: 0}
+  skipInactiveMatch: 0
+  forceCandidateLog: 0
