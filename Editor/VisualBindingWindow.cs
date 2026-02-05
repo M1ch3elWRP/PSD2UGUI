@@ -583,71 +583,166 @@ namespace PSDImporter
             foreach (var bind in bindings)
             {
                 if (bind.isConfirmed && bind.unityNode != null) { occupiedNodes.Add(bind.unityNode); matchedBindings.Add(bind); }
-                else { bind.unityNode = null; bind.score = 0; bind.statusInfo = "等待匹配"; bind.isIdMatched = false; }
+                else { bind.unityNode = null; bind.score = 0; bind.statusInfo = "Waiting for match"; bind.isIdMatched = false; }
             }
-            List<MatchCandidate> candidates = new List<MatchCandidate>();
-            var allNodes = targetRoot.GetComponentsInChildren<RectTransform>(true);
+
+            var pendingBinds = new List<BindingPairViewModel>();
             foreach (var bind in bindings)
             {
                 if (matchedBindings.Contains(bind)) continue;
+                if (bindingAsset != null)
+                {
+                    GameObject savedGo = bindingAsset.GetBindTarget(bind.psdItem.id);
+                    if (savedGo != null && savedGo.transform.IsChildOf(targetRoot.transform) && !occupiedNodes.Contains(savedGo.transform))
+                    {
+                        bind.unityNode = savedGo.transform;
+                        bind.score = 9999f;
+                        bind.statusInfo = "ID history binding";
+                        bind.isIdMatched = true;
+                        bind.isConfirmed = true;
+                        matchedBindings.Add(bind);
+                        occupiedNodes.Add(savedGo.transform);
+                        if (logDetail)
+                        {
+                            Debug.Log($"[Match] Saved binding for {bind.psdItem.pngName} -> {GetTransformPath(savedGo.transform)}");
+                        }
+                        continue;
+                    }
+                }
+                pendingBinds.Add(bind);
+            }
+
+            var allNodes = targetRoot.GetComponentsInChildren<RectTransform>(true);
+            var nodeList = new List<RectTransform>();
+            int skippedRoot = 0;
+            int skippedOccupied = 0;
+            int skippedInactive = 0;
+            foreach (var node in allNodes)
+            {
+                if (node == targetRoot.transform) { skippedRoot++; continue; }
+                if (occupiedNodes.Contains(node.transform)) { skippedOccupied++; continue; }
+                if (matchConfig.skipInactiveMatch && !node.gameObject.activeInHierarchy) { skippedInactive++; continue; }
+                nodeList.Add(node);
+            }
+
+            if (logDetail)
+            {
+                Debug.Log($"[Match] Candidate nodes={nodeList.Count}, skipped(root:{skippedRoot}, occupied:{skippedOccupied}, inactive:{skippedInactive})");
+            }
+
+            int itemCount = pendingBinds.Count;
+            int nodeCount = nodeList.Count;
+            if (itemCount == 0 || nodeCount == 0)
+            {
+                foreach (var bind in pendingBinds) bind.statusInfo = "No suitable node found";
+                UpdatePrefabStatus();
+                return;
+            }
+
+            float[,] scoreMatrix = new float[itemCount, nodeCount];
+            bool[,] validMatrix = new bool[itemCount, nodeCount];
+            float maxScore = 0f;
+
+            for (int i = 0; i < itemCount; i++)
+            {
+                var bind = pendingBinds[i];
                 float localX = bind.psdItem.x - cachedPsdData.width * 0.5f;
                 float localY = bind.psdItem.y - cachedPsdData.height * 0.5f;
                 Vector3 targetWorldPos = targetRoot.transform.TransformPoint(new Vector3(localX, localY, 0));
                 List<MatchCandidate> localCandidates = logDetail ? new List<MatchCandidate>() : null;
-                int skippedInactive = 0;
-                int skippedOccupied = 0;
-                int skippedRoot = 0;
-                foreach (var node in allNodes)
+                int skippedType = 0;
+
+                for (int j = 0; j < nodeCount; j++)
                 {
-                    if (node == targetRoot.transform) { skippedRoot++; continue; }
-                    if (occupiedNodes.Contains(node)) { skippedOccupied++; continue; }
-                    if (matchConfig != null && matchConfig.skipInactiveMatch && !node.gameObject.activeInHierarchy) { skippedInactive++; continue; }
+                    var node = nodeList[j];
+                    if (!IsTypeMatch(node, bind.psdItem.uiType)) { skippedType++; continue; }
 
                     ScoreBreakdown breakdown;
                     float score = CalculateMatchScoreDetailed(bind.psdItem, node, targetWorldPos, matchConfig, out breakdown);
                     if (score > 1f)
                     {
-                        var candidate = new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f, breakdown = breakdown };
-                        candidates.Add(candidate);
-                        if (logDetail) localCandidates.Add(candidate);
+                        validMatrix[i, j] = true;
+                        scoreMatrix[i, j] = score;
+                        if (score > maxScore) maxScore = score;
+                        if (logDetail)
+                        {
+                            var candidate = new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f, breakdown = breakdown };
+                            localCandidates.Add(candidate);
+                        }
                     }
                 }
-                if (bindingAsset != null)
-                {
-                    GameObject savedGo = bindingAsset.GetBindTarget(bind.psdItem.id);
-                    if (savedGo != null && savedGo.transform.IsChildOf(targetRoot.transform) && !occupiedNodes.Contains(savedGo.transform))
-                        candidates.Add(new MatchCandidate { bind = bind, node = savedGo.transform, score = 9999f, reason = "ID历史绑定", isPerfect = true });
-                }
+
                 if (logDetail)
                 {
                     var sb = new StringBuilder();
-                    sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
+                    sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
                     var top = localCandidates.OrderByDescending(c => c.score).Take(5).ToList();
-                    for (int i = 0; i < top.Count; i++)
+                    for (int k = 0; k < top.Count; k++)
                     {
-                        var cand = top[i];
+                        var cand = top[k];
                         var b = cand.breakdown;
                         var rt = cand.node as RectTransform;
                         float nodeW = rt != null ? rt.rect.width : 0f;
                         float nodeH = rt != null ? rt.rect.height : 0f;
-                        sb.AppendLine($"  #{i + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}");
+                        sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}");
                     }
                     Debug.Log(sb.ToString());
                 }
             }
-            candidates.Sort((a, b) => b.score.CompareTo(a.score));
-            foreach (var cand in candidates)
+
+            if (maxScore <= 0f)
             {
-                if (!matchedBindings.Contains(cand.bind) && !occupiedNodes.Contains(cand.node))
+                foreach (var bind in pendingBinds) bind.statusInfo = "No suitable node found";
+                UpdatePrefabStatus();
+                return;
+            }
+
+            int size = Mathf.Max(itemCount, nodeCount);
+            float invalidCost = maxScore + 1000f;
+            float[,] cost = new float[size, size];
+            for (int i = 0; i < size; i++)
+            {
+                for (int j = 0; j < size; j++)
                 {
-                    cand.bind.unityNode = cand.node; cand.bind.score = cand.score; cand.bind.statusInfo = cand.reason ?? $"Score: {cand.score:F0}"; cand.bind.isIdMatched = cand.score > 9000f;
-                    if (cand.isPerfect) cand.bind.isConfirmed = true;
-                    matchedBindings.Add(cand.bind); occupiedNodes.Add(cand.node);
+                    cost[i, j] = invalidCost;
                 }
             }
-            foreach (var bind in bindings) if (!matchedBindings.Contains(bind)) bind.statusInfo = "No suitable node found";
+            for (int i = 0; i < itemCount; i++)
+            {
+                for (int j = 0; j < nodeCount; j++)
+                {
+                    if (validMatrix[i, j])
+                    {
+                        cost[i, j] = maxScore - scoreMatrix[i, j];
+                    }
+                }
+            }
+
+            int[] assignment = PSDHungarianSolver.Solve(cost);
+            for (int i = 0; i < itemCount; i++)
+            {
+                int j = assignment[i];
+                if (j < 0 || j >= nodeCount) continue;
+                if (!validMatrix[i, j]) continue;
+                var bind = pendingBinds[i];
+                var node = nodeList[j];
+                if (occupiedNodes.Contains(node.transform)) continue;
+                bind.unityNode = node;
+                bind.score = scoreMatrix[i, j];
+                bind.statusInfo = $"Score: {bind.score:F0}";
+                bind.isIdMatched = false;
+                if (bind.score > 150f) bind.isConfirmed = true;
+                matchedBindings.Add(bind);
+                occupiedNodes.Add(node.transform);
+            }
+
+            foreach (var bind in pendingBinds)
+            {
+                if (!matchedBindings.Contains(bind)) bind.statusInfo = "No suitable node found";
+            }
             UpdatePrefabStatus();
         }
+
         private void ApplyBindings()
         {
             if (importMode != ImportMode.Restore) return;
