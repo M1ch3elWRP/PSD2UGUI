@@ -83,5 +83,36 @@ namespace PSDImporter
         [Header("Debug Options")]
         [Tooltip("Always print Top5 candidates even when all items are matched by ID.")]
         public bool forceCandidateLog = false;
+
+        [Header("Auto Learn (ML)")]
+        [Tooltip("Enable auto sample collection and incremental model updates.")]
+        public bool autoLearnEnabled = false;
+
+        [Tooltip("Dataset JSON path (absolute or Assets-relative).")]
+        public string autoLearnDatasetPath = "Assets/PSDTools/ML/psd_match_dataset.json";
+
+        [Tooltip("Model JSON path (absolute or Assets-relative).")]
+        public string autoLearnModelPath = "Assets/PSDTools/ML/psd_match_model.json";
+
+        [Tooltip("Record the first N unique screens before auto-updating the model.")]
+        public int autoLearnWarmupScreens = 10;
+
+        [Tooltip("Negative samples per positive sample.")]
+        public int autoLearnNegativePerPositive = 3;
+
+        [Tooltip("Incremental training epochs per update.")]
+        public int autoLearnEpochsPerUpdate = 30;
+
+        [Tooltip("Learning rate for incremental updates.")]
+        public float autoLearnLearningRate = 0.05f;
+
+        [Tooltip("L2 regularization for incremental updates.")]
+        public float autoLearnL2 = 0.0001f;
+
+        [Tooltip("Only record bindings that are confirmed.")]
+        public bool autoLearnRequireConfirmed = true;
+
+        [Tooltip("Max depth diff used for depth normalization.")]
+        public int autoLearnMaxDepthDiff = 10;
     }
 }

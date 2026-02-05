@@ -844,6 +844,11 @@ namespace PSDImporter
 
             ShowNotification(new GUIContent($"完成! ({count} 节点)"));
             UpdatePrefabStatus();
+            if (config != null && config.autoLearnEnabled)
+            {
+                string psdPath = psdDataFile != null ? AssetDatabase.GetAssetPath(psdDataFile) : null;
+                PSDMatchAutoLearn.RecordAndMaybeTrain(psdPath, cachedPsdData, targetRoot.transform, bindings, config);
+            }
         }
 
         private void CreateNewUI()

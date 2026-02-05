@@ -18,6 +18,7 @@ namespace PSDImporter
         public float maxDistanceError = 200f;
         public float maxSizeDiff = 100f;
         public int maxDepthDiff = 10;
+        public string[] screenIds = new string[0];
         public PSDMatchSample[] samples = new PSDMatchSample[0];
     }
 
@@ -80,6 +81,77 @@ namespace PSDImporter
                 for (int i = 0; i < dataset.samples.Length; i++)
                 {
                     var s = dataset.samples[i];
+                    if (s == null || s.x == null || s.x.Length != featureCount) continue;
+                    int y = s.y != 0 ? 1 : 0;
+
+                    float z = bias;
+                    for (int k = 0; k < featureCount; k++) z += weights[k] * s.x[k];
+                    float p = Sigmoid(z);
+
+                    float diff = p - y;
+                    for (int k = 0; k < featureCount; k++)
+                    {
+                        float grad = diff * s.x[k] + options.l2 * weights[k];
+                        weights[k] -= options.learningRate * grad;
+                    }
+                    bias -= options.learningRate * diff;
+
+                    float eps = 1e-6f;
+                    loss += (float)(-(y * Math.Log(p + eps) + (1 - y) * Math.Log(1 - p + eps)));
+                    if ((p >= 0.5f) == (y == 1)) correct++;
+                    sampleCount++;
+                }
+
+                report.loss = sampleCount > 0 ? loss / sampleCount : 0f;
+                report.accuracy = sampleCount > 0 ? (float)correct / sampleCount : 0f;
+            }
+
+            report.sampleCount = sampleCount;
+            report.epochs = options.epochs;
+
+            return new PSDMatchModel
+            {
+                featureCount = featureCount,
+                weights = weights,
+                bias = bias,
+                maxDistanceError = dataset.maxDistanceError,
+                maxSizeDiff = dataset.maxSizeDiff,
+                maxDepthDiff = dataset.maxDepthDiff,
+                trainingLoss = report.loss,
+                trainingAccuracy = report.accuracy,
+                trainedAtUtc = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            };
+        }
+
+        public static PSDMatchModel TrainIncremental(PSDMatchSample[] samples, PSDMatchDataset dataset, PSDMatchTrainingOptions options, PSDMatchModel startModel, out PSDMatchTrainingReport report)
+        {
+            report = new PSDMatchTrainingReport();
+            if (samples == null || samples.Length == 0)
+            {
+                return startModel;
+            }
+
+            int featureCount = dataset.featureCount;
+            if (featureCount <= 0) throw new ArgumentException("Invalid featureCount.");
+
+            float[] weights = new float[featureCount];
+            float bias = 0f;
+            if (startModel != null && startModel.weights != null && startModel.weights.Length == featureCount)
+            {
+                Array.Copy(startModel.weights, weights, featureCount);
+                bias = startModel.bias;
+            }
+
+            int sampleCount = 0;
+            for (int epoch = 0; epoch < options.epochs; epoch++)
+            {
+                float loss = 0f;
+                int correct = 0;
+                sampleCount = 0;
+
+                for (int i = 0; i < samples.Length; i++)
+                {
+                    var s = samples[i];
                     if (s == null || s.x == null || s.x.Length != featureCount) continue;
                     int y = s.y != 0 ? 1 : 0;
 
