@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: PSDMatchMLConfig
   m_EditorClassIdentifier: 
   autoLearnEnabled: 1
-  allowRepeatScreens: 0
+  allowRepeatScreens: 1
   datasetPath: Assets/PSDTools/ML/psd_match_dataset.json
   modelPath: Assets/PSDTools/ML/psd_match_model.json
   negativePerPositive: 3
