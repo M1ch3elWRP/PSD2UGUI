@@ -143,7 +143,7 @@ namespace PSDImporter
                 Texture2D tex = null;
                 try
                 {
-                    tex = SpriteUtility.GetSpriteTexture(sprite, false);
+                    tex = UnityEditor.Sprites.SpriteUtility.GetSpriteTexture(sprite, false);
                     if (tex == null) continue;
                     var pixels = tex.GetPixels32();
                     var exact = ComputePixelHash(pixels, tex.width, tex.height);
