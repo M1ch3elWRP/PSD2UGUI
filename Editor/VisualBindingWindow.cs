@@ -604,7 +604,7 @@ namespace PSDImporter
                         occupiedNodes.Add(savedGo.transform);
                         if (logDetail)
                         {
-                            Debug.Log($"[Match] Saved binding for {bind.psdItem.pngName} -> {GetTransformPath(savedGo.transform)}");
+                            Debug.Log($"[Match] Saved binding for {bind.psdItem.pngName} -> {GetTransformPath(savedGo.transform)} score=9999 (ID)");
                         }
                         continue;
                     }
@@ -734,6 +734,15 @@ namespace PSDImporter
                 if (bind.score > 150f) bind.isConfirmed = true;
                 matchedBindings.Add(bind);
                 occupiedNodes.Add(node.transform);
+                if (logDetail)
+                {
+                    ScoreBreakdown breakdown;
+                    CalculateMatchScoreDetailed(bind.psdItem, node, targetRoot.transform.TransformPoint(new Vector3(bind.psdItem.x - cachedPsdData.width * 0.5f, bind.psdItem.y - cachedPsdData.height * 0.5f, 0)), matchConfig, out breakdown);
+                    var rt = node as RectTransform;
+                    float nodeW = rt != null ? rt.rect.width : 0f;
+                    float nodeH = rt != null ? rt.rect.height : 0f;
+                    Debug.Log($"[Match] Result {bind.psdItem.pngName} -> {GetTransformPath(node)} score={bind.score:F1} dist={breakdown.distance:F1} diff=({breakdown.diffW:F1},{breakdown.diffH:F1}) nodeSize=({nodeW:F1},{nodeH:F1}) w=({breakdown.weightedPos:F1},{breakdown.weightedSize:F1},{breakdown.weightedType:F1})");
+                }
             }
 
             foreach (var bind in pendingBinds)
