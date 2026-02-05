@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
@@ -544,13 +545,41 @@ namespace PSDImporter
         // =================================================================================
         // 匹配与应用
         // =================================================================================
-        private class MatchCandidate { public BindingPairViewModel bind; public Transform node; public float score; public string reason; public bool isPerfect; }
+        private struct ScoreBreakdown
+        {
+            public float distance;
+            public float diffW;
+            public float diffH;
+            public float scorePos;
+            public float scoreSize;
+            public float scoreType;
+            public float weightedPos;
+            public float weightedSize;
+            public float weightedType;
+            public float total;
+            public bool passThresholds;
+        }
+
+        private class MatchCandidate
+        {
+            public BindingPairViewModel bind;
+            public Transform node;
+            public float score;
+            public string reason;
+            public bool isPerfect;
+            public ScoreBreakdown breakdown;
+        }
         private void RunAutoMatch()
         {
             if (targetRoot == null || bindings.Count == 0) return;
             var matchConfig = config ?? ScriptableObject.CreateInstance<PSDImportConfig>();
+            bool logDetail = matchConfig != null && matchConfig.showDetailedLog;
             HashSet<Transform> occupiedNodes = new HashSet<Transform>();
             HashSet<BindingPairViewModel> matchedBindings = new HashSet<BindingPairViewModel>();
+            if (logDetail)
+            {
+                Debug.Log($"[Match] Config maxDist={matchConfig.maxDistanceError:F1}, maxSizeDiff={matchConfig.maxSizeDiff:F1}, weightPos={matchConfig.weightPosition:F2}, weightSize={matchConfig.weightSize:F2}, weightType={matchConfig.weightType:F2}, skipInactive={matchConfig.skipInactiveMatch}");
+            }
             foreach (var bind in bindings)
             {
                 if (bind.isConfirmed && bind.unityNode != null) { occupiedNodes.Add(bind.unityNode); matchedBindings.Add(bind); }
@@ -564,19 +593,46 @@ namespace PSDImporter
                 float localX = bind.psdItem.x - cachedPsdData.width * 0.5f;
                 float localY = bind.psdItem.y - cachedPsdData.height * 0.5f;
                 Vector3 targetWorldPos = targetRoot.transform.TransformPoint(new Vector3(localX, localY, 0));
+                List<MatchCandidate> localCandidates = logDetail ? new List<MatchCandidate>() : null;
+                int skippedInactive = 0;
+                int skippedOccupied = 0;
+                int skippedRoot = 0;
                 foreach (var node in allNodes)
                 {
-                    if (node == targetRoot.transform) continue;
-                    if (occupiedNodes.Contains(node)) continue;
-                    if (matchConfig != null && matchConfig.skipInactiveMatch && !node.gameObject.activeInHierarchy) continue;
-                    float score = PSDMatchingStrategy.CalculateMatchScore(bind.psdItem, node, targetWorldPos, matchConfig);
-                    if (score > 1f) candidates.Add(new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f });
+                    if (node == targetRoot.transform) { skippedRoot++; continue; }
+                    if (occupiedNodes.Contains(node)) { skippedOccupied++; continue; }
+                    if (matchConfig != null && matchConfig.skipInactiveMatch && !node.gameObject.activeInHierarchy) { skippedInactive++; continue; }
+
+                    ScoreBreakdown breakdown;
+                    float score = CalculateMatchScoreDetailed(bind.psdItem, node, targetWorldPos, matchConfig, out breakdown);
+                    if (score > 1f)
+                    {
+                        var candidate = new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f, breakdown = breakdown };
+                        candidates.Add(candidate);
+                        if (logDetail) localCandidates.Add(candidate);
+                    }
                 }
                 if (bindingAsset != null)
                 {
                     GameObject savedGo = bindingAsset.GetBindTarget(bind.psdItem.id);
                     if (savedGo != null && savedGo.transform.IsChildOf(targetRoot.transform) && !occupiedNodes.Contains(savedGo.transform))
                         candidates.Add(new MatchCandidate { bind = bind, node = savedGo.transform, score = 9999f, reason = "ID历史绑定", isPerfect = true });
+                }
+                if (logDetail)
+                {
+                    var sb = new StringBuilder();
+                    sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
+                    var top = localCandidates.OrderByDescending(c => c.score).Take(5).ToList();
+                    for (int i = 0; i < top.Count; i++)
+                    {
+                        var cand = top[i];
+                        var b = cand.breakdown;
+                        var rt = cand.node as RectTransform;
+                        float nodeW = rt != null ? rt.rect.width : 0f;
+                        float nodeH = rt != null ? rt.rect.height : 0f;
+                        sb.AppendLine($"  #{i + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}");
+                    }
+                    Debug.Log(sb.ToString());
                 }
             }
             candidates.Sort((a, b) => b.score.CompareTo(a.score));
@@ -689,6 +745,73 @@ namespace PSDImporter
                 rt.rect.height * previewZoom
             );
             return true;
+        }
+
+        private static float CalculateMatchScoreDetailed(PicData item, RectTransform node, Vector3 targetWorldPos, PSDImportConfig config, out ScoreBreakdown breakdown)
+        {
+            breakdown = new ScoreBreakdown();
+            if (config == null || node == null) return 0f;
+
+            float dist = Vector3.Distance(node.position, targetWorldPos);
+            float scorePos = 0f;
+            if (dist < config.maxDistanceError)
+            {
+                scorePos = (1f - (dist / config.maxDistanceError)) * 100f;
+            }
+
+            float diffW = Mathf.Abs(node.rect.width - item.width);
+            float diffH = Mathf.Abs(node.rect.height - item.height);
+            float scoreSize = 0f;
+            if ((diffW + diffH) < config.maxSizeDiff)
+            {
+                scoreSize = (1f - ((diffW + diffH) / config.maxSizeDiff)) * 100f;
+            }
+
+            float scoreType = IsTypeMatch(node, item.uiType) ? 100f : 0f;
+            bool pass = scorePos > 0f || scoreSize > 0f;
+            float weightedPos = scorePos * config.weightPosition;
+            float weightedSize = scoreSize * config.weightSize;
+            float weightedType = scoreType * config.weightType;
+            float total = pass ? (weightedPos + weightedSize + weightedType) : 0f;
+
+            breakdown.distance = dist;
+            breakdown.diffW = diffW;
+            breakdown.diffH = diffH;
+            breakdown.scorePos = scorePos;
+            breakdown.scoreSize = scoreSize;
+            breakdown.scoreType = scoreType;
+            breakdown.weightedPos = weightedPos;
+            breakdown.weightedSize = weightedSize;
+            breakdown.weightedType = weightedType;
+            breakdown.total = total;
+            breakdown.passThresholds = pass;
+
+            return total;
+        }
+
+        private static bool IsTypeMatch(Transform node, string psdType)
+        {
+            if (psdType == "Button") return node.GetComponent<Button>() != null;
+            if (psdType == "Text") return node.GetComponent<Text>() != null;
+            if (psdType == "RawImage") return node.GetComponent<RawImage>() != null;
+            if (psdType == "Image") return node.GetComponent<Image>() != null && node.GetComponent<Button>() == null;
+            if (psdType == "Layout") return node.GetComponent<LayoutGroup>() != null;
+            if (psdType == "Item") return node.GetComponent<LayoutGroup>() == null && node.GetComponentInParent<LayoutGroup>() != null;
+            return false;
+        }
+
+        private static string GetTransformPath(Transform t)
+        {
+            if (t == null) return string.Empty;
+            var parts = new List<string>();
+            var current = t;
+            while (current != null)
+            {
+                parts.Add(current.name);
+                current = current.parent;
+            }
+            parts.Reverse();
+            return string.Join("/", parts);
         }
 
         private void DrawLegend()
