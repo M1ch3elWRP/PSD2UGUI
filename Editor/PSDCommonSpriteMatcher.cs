@@ -20,6 +20,8 @@ namespace PSDImporter
         private static readonly List<SpriteHashEntry> SpriteEntries = new List<SpriteHashEntry>();
         private static string lastFolderKey;
         private static bool indexBuilt;
+        private static bool warnedNoFolder;
+        private static bool warnedNoSprite;
 
         public static void Reset()
         {
@@ -27,6 +29,8 @@ namespace PSDImporter
             SpriteEntries.Clear();
             lastFolderKey = null;
             indexBuilt = false;
+            warnedNoFolder = false;
+            warnedNoSprite = false;
         }
 
         public static bool TryResolveCommonSprite(string pngAssetPath, PSDImportConfig config, out Sprite sprite)
@@ -119,7 +123,15 @@ namespace PSDImporter
             lastFolderKey = folderKey;
             indexBuilt = true;
 
-            if (folders.Length == 0) return;
+            if (folders.Length == 0)
+            {
+                if (!warnedNoFolder)
+                {
+                    Debug.Log("[PSDCommonSpriteMatcher] Common sprite match disabled: no valid folders configured.");
+                    warnedNoFolder = true;
+                }
+                return;
+            }
 
             var guids = AssetDatabase.FindAssets("t:Sprite", folders);
             for (int i = 0; i < guids.Length; i++)
@@ -153,6 +165,12 @@ namespace PSDImporter
                 {
                     if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
                 }
+            }
+
+            if (SpriteEntries.Count == 0 && !warnedNoSprite)
+            {
+                Debug.Log("[PSDCommonSpriteMatcher] Common sprite match disabled: no sprites found in configured folders.");
+                warnedNoSprite = true;
             }
         }
 
