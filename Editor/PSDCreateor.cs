@@ -22,8 +22,7 @@ namespace PSDImporter
         {
             AssetDatabase.Refresh();
             PSDAssetDeduper.EnsureScope(psdData.psdAssetsFolder);
-            Transform canvasTrans = FindOrCreateCanvas();
-            var rootRectTrans = CreateGo<RectTransform>(new DirectoryInfo(psdData.psdAssetsFolder).Name, canvasTrans, "UI");
+            var rootRectTrans = CreateCanvasRoot(new DirectoryInfo(psdData.psdAssetsFolder).Name);
 
             rootRectTrans.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, psdData.width);
             rootRectTrans.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, psdData.height);
@@ -680,11 +679,21 @@ namespace PSDImporter
                    Mathf.Abs(a.w - b.w) < 0.01f;
         }
 
-        private static Transform FindOrCreateCanvas()
+        private static RectTransform CreateCanvasRoot(string name)
         {
-            var canvas = GameObject.FindObjectOfType<Canvas>();
-            if (canvas == null) { EditorApplication.ExecuteMenuItem("GameObject/UI/Canvas"); canvas = GameObject.FindObjectOfType<Canvas>(); }
-            return canvas.transform;
+            var go = new GameObject(string.IsNullOrEmpty(name) ? "Canvas" : name, typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            int uiLayer = LayerMask.NameToLayer("UI");
+            if (uiLayer >= 0) go.layer = uiLayer;
+
+            var canvas = go.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+
+            var scaler = go.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
+            scaler.scaleFactor = 1f;
+            scaler.referencePixelsPerUnit = 100f;
+
+            return go.GetComponent<RectTransform>();
         }
 
         private static T CreateGo<T>(string goName, Transform parent, string LayerName = null) where T : UnityEngine.Component
