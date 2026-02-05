@@ -33,6 +33,22 @@ namespace PSDImporter
         [Tooltip("Subfolder name under PSD asset folder for moved duplicates.")]
         public string dedupeMoveFolder = "_Duplicates";
 
+        [Header("Common Sprite Matching")]
+        [Tooltip("Enable @Common layer matching against project sprites.")]
+        public bool commonSpriteMatch = false;
+
+        [Tooltip("Folders under Assets that contain common sprites (used for @Common matching).")]
+        public string[] commonSpriteFolders = new string[0];
+
+        [Tooltip("Perceptual hash threshold for @Common fallback (0 to disable).")]
+        public int commonSpritePerceptualThreshold = 8;
+
+        [Tooltip("Move matched @Common exports into a subfolder for manual cleanup.")]
+        public bool commonSpriteMoveMatched = true;
+
+        [Tooltip("Subfolder name under PSD asset folder for matched @Common exports.")]
+        public string commonSpriteMoveFolder = "_CommonMatched";
+
         [Header("Component Overrides (optional)")]
         [Tooltip("Override @Img/@Image component. Must derive from UnityEngine.UI.Image.")]
         public MonoScript imageComponent;

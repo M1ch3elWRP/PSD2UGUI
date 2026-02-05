@@ -487,6 +487,12 @@ namespace PSDImporter
             return child.x >= left && child.x <= right && child.y >= bottom && child.y <= top;
         }
 
+        private static bool IsCommonTagged(PicData item)
+        {
+            if (string.IsNullOrEmpty(item.pngName)) return false;
+            return item.pngName.IndexOf("@Common", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         // --- 组件 Setup 方法 ---
 
         public static void SetupText(UnityEngine.UI.Text txt, PicData item, PSDImportConfig config)
@@ -515,6 +521,18 @@ namespace PSDImporter
             string group = item.groupName == "root/" ? "/" : item.groupName;
             string folder = assetFolder.Replace("\\", "/");
             string pngpath = $"{folder}{group}{item.pngName}.png".Replace("//", "/");
+
+            if (config != null && config.commonSpriteMatch && IsCommonTagged(item))
+            {
+                if (PSDCommonSpriteMatcher.TryResolveCommonSprite(pngpath, config, out var commonSprite))
+                {
+                    img.sprite = commonSprite;
+                    img.type = (commonSprite != null && commonSprite.border.sqrMagnitude > 0f) ? Image.Type.Sliced : Image.Type.Simple;
+                    PSDCommonSpriteMatcher.MoveMatchedExport(pngpath, assetFolder, config);
+                    return;
+                }
+            }
+
             string resolvedPath = PSDAssetDeduper.GetCanonicalPath(
                 pngpath,
                 config != null && config.dedupeSprites,
