@@ -79,5 +79,9 @@ namespace PSDImporter
         [Header("Matching Filters")]
         [Tooltip("When enabled, inactive prefab nodes are ignored during auto match.")]
         public bool skipInactiveMatch = false;
+
+        [Header("Debug Options")]
+        [Tooltip("Always print Top5 candidates even when all items are matched by ID.")]
+        public bool forceCandidateLog = false;
     }
 }

@@ -574,11 +574,13 @@ namespace PSDImporter
             if (targetRoot == null || bindings.Count == 0) return;
             var matchConfig = config ?? ScriptableObject.CreateInstance<PSDImportConfig>();
             bool logDetail = matchConfig != null && matchConfig.showDetailedLog;
+            bool forceCandidateLog = matchConfig != null && matchConfig.forceCandidateLog;
+            bool logCandidatesInLoop = logDetail && !forceCandidateLog;
             HashSet<Transform> occupiedNodes = new HashSet<Transform>();
             HashSet<BindingPairViewModel> matchedBindings = new HashSet<BindingPairViewModel>();
             if (logDetail)
             {
-                Debug.Log($"[Match] Config maxDist={matchConfig.maxDistanceError:F1}, maxSizeDiff={matchConfig.maxSizeDiff:F1}, weightPos={matchConfig.weightPosition:F2}, weightSize={matchConfig.weightSize:F2}, weightType={matchConfig.weightType:F2}, skipInactive={matchConfig.skipInactiveMatch}");
+                Debug.Log($"[Match] Config maxDist={matchConfig.maxDistanceError:F1}, maxSizeDiff={matchConfig.maxSizeDiff:F1}, weightPos={matchConfig.weightPosition:F2}, weightSize={matchConfig.weightSize:F2}, weightType={matchConfig.weightType:F2}, skipInactive={matchConfig.skipInactiveMatch}, forceCandidateLog={forceCandidateLog}");
             }
             foreach (var bind in bindings)
             {
@@ -614,20 +616,42 @@ namespace PSDImporter
 
             var allNodes = targetRoot.GetComponentsInChildren<RectTransform>(true);
             var nodeList = new List<RectTransform>();
+            var nodeListForLog = forceCandidateLog ? new List<RectTransform>() : nodeList;
             int skippedRoot = 0;
             int skippedOccupied = 0;
             int skippedInactive = 0;
+            int skippedRootLog = 0;
+            int skippedInactiveLog = 0;
+            int skippedOccupiedLog = 0;
             foreach (var node in allNodes)
             {
-                if (node == targetRoot.transform) { skippedRoot++; continue; }
-                if (occupiedNodes.Contains(node.transform)) { skippedOccupied++; continue; }
-                if (matchConfig.skipInactiveMatch && !node.gameObject.activeInHierarchy) { skippedInactive++; continue; }
-                nodeList.Add(node);
+                if (node == targetRoot.transform) { skippedRoot++; skippedRootLog++; continue; }
+                if (matchConfig.skipInactiveMatch && !node.gameObject.activeInHierarchy) { skippedInactive++; skippedInactiveLog++; continue; }
+
+                bool isOccupied = occupiedNodes.Contains(node.transform);
+                if (isOccupied) skippedOccupied++; else nodeList.Add(node);
+                if (forceCandidateLog)
+                {
+                    if (isOccupied) skippedOccupiedLog++;
+                    nodeListForLog.Add(node);
+                }
             }
 
             if (logDetail)
             {
                 Debug.Log($"[Match] Candidate nodes={nodeList.Count}, skipped(root:{skippedRoot}, occupied:{skippedOccupied}, inactive:{skippedInactive})");
+                if (forceCandidateLog)
+                {
+                    Debug.Log($"[Match] Candidate nodes(for log)={nodeListForLog.Count}, skipped(root:{skippedRootLog}, occupied:{skippedOccupiedLog}, inactive:{skippedInactiveLog})");
+                }
+            }
+
+            if (logDetail && forceCandidateLog)
+            {
+                foreach (var bind in bindings)
+                {
+                    LogTopCandidatesForBind(bind, nodeListForLog, matchConfig, skippedRootLog, skippedInactiveLog, skippedOccupiedLog);
+                }
             }
 
             int itemCount = pendingBinds.Count;
@@ -649,7 +673,7 @@ namespace PSDImporter
                 float localX = bind.psdItem.x - cachedPsdData.width * 0.5f;
                 float localY = bind.psdItem.y - cachedPsdData.height * 0.5f;
                 Vector3 targetWorldPos = targetRoot.transform.TransformPoint(new Vector3(localX, localY, 0));
-                List<MatchCandidate> localCandidates = logDetail ? new List<MatchCandidate>() : null;
+                List<MatchCandidate> localCandidates = logCandidatesInLoop ? new List<MatchCandidate>() : null;
                 int skippedType = 0;
 
                 for (int j = 0; j < nodeCount; j++)
@@ -664,7 +688,7 @@ namespace PSDImporter
                         validMatrix[i, j] = true;
                         scoreMatrix[i, j] = score;
                         if (score > maxScore) maxScore = score;
-                        if (logDetail)
+                        if (logCandidatesInLoop)
                         {
                             var candidate = new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f, breakdown = breakdown };
                             localCandidates.Add(candidate);
@@ -672,7 +696,7 @@ namespace PSDImporter
                     }
                 }
 
-                if (logDetail)
+                if (logCandidatesInLoop)
                 {
                     var sb = new StringBuilder();
                     sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
@@ -750,6 +774,44 @@ namespace PSDImporter
                 if (!matchedBindings.Contains(bind)) bind.statusInfo = "No suitable node found";
             }
             UpdatePrefabStatus();
+        }
+
+        private void LogTopCandidatesForBind(BindingPairViewModel bind, IList<RectTransform> nodes, PSDImportConfig config, int skippedRoot, int skippedInactive, int skippedOccupied)
+        {
+            if (bind == null || nodes == null || config == null) return;
+
+            float localX = bind.psdItem.x - cachedPsdData.width * 0.5f;
+            float localY = bind.psdItem.y - cachedPsdData.height * 0.5f;
+            Vector3 targetWorldPos = targetRoot.transform.TransformPoint(new Vector3(localX, localY, 0));
+
+            List<MatchCandidate> localCandidates = new List<MatchCandidate>();
+            int skippedType = 0;
+            for (int j = 0; j < nodes.Count; j++)
+            {
+                var node = nodes[j];
+                if (!IsTypeMatch(node, bind.psdItem.uiType)) { skippedType++; continue; }
+
+                ScoreBreakdown breakdown;
+                float score = CalculateMatchScoreDetailed(bind.psdItem, node, targetWorldPos, config, out breakdown);
+                if (score > 1f)
+                {
+                    localCandidates.Add(new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f, breakdown = breakdown });
+                }
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
+            var top = localCandidates.OrderByDescending(c => c.score).Take(5).ToList();
+            for (int k = 0; k < top.Count; k++)
+            {
+                var cand = top[k];
+                var b = cand.breakdown;
+                var rt = cand.node as RectTransform;
+                float nodeW = rt != null ? rt.rect.width : 0f;
+                float nodeH = rt != null ? rt.rect.height : 0f;
+                sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}");
+            }
+            Debug.Log(sb.ToString());
         }
 
         private void ApplyBindings()
