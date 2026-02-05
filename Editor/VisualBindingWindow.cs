@@ -60,6 +60,10 @@ namespace PSDImporter
         private static readonly Color PsdOutlineColor = new Color(0.25f, 0.65f, 1f, 0.7f);
         private static readonly Color PrefabOutlineColor = new Color(1f, 0.7f, 0.2f, 0.75f);
 
+        private PSDMatchModel statusMlModel;
+        private string statusMlModelPath;
+        private double statusMlModelNextCheck;
+
         // 拖拽状态
         private bool isResizingPreview = false;
         private bool isResizingList = false;
@@ -218,6 +222,7 @@ namespace PSDImporter
 
             // 交互区域 Rect (本地坐标)
             DrawLegend();
+            DrawStatusPanel(w);
             Rect localRect = new Rect(0, 0, w, h);
 
             if (cachedPsdData != null)
@@ -1037,6 +1042,76 @@ namespace PSDImporter
         {
             EditorGUI.DrawRect(rect, color);
             GUI.Label(new Rect(rect.x + rect.width + 4, rect.y - 2, 60, 16), label, EditorStyles.miniLabel);
+        }
+
+        private void DrawStatusPanel(float viewWidth)
+        {
+            const float panelW = 300f;
+            const float panelH = 88f;
+            float x = Mathf.Max(6f, viewWidth - panelW - 6f);
+            float y = 6f;
+            Rect panelRect = new Rect(x, y, panelW, panelH);
+
+            EditorGUI.DrawRect(panelRect, new Color(0f, 0f, 0f, 0.35f));
+            GUI.Box(panelRect, GUIContent.none);
+
+            float lineX = panelRect.x + 8f;
+            float lineY = panelRect.y + 6f;
+            float lineW = panelRect.width - 16f;
+
+            GUI.Label(new Rect(lineX, lineY, lineW, 16f), "Status", EditorStyles.boldLabel);
+            lineY += 18f;
+
+            int total = bindings != null ? bindings.Count : 0;
+            int matched = bindings != null ? bindings.Count(b => b.unityNode != null) : 0;
+            int confirmed = bindings != null ? bindings.Count(b => b.isConfirmed) : 0;
+            GUI.Label(new Rect(lineX, lineY, lineW, 16f), $"Items: {total}  Matched: {matched}  Confirmed: {confirmed}", EditorStyles.miniLabel);
+            lineY += 16f;
+
+            if (config != null)
+            {
+                GUI.Label(new Rect(lineX, lineY, lineW, 16f),
+                    $"Manual W: Pos={config.weightPosition:F2} Size={config.weightSize:F2} Type={config.weightType:F2}",
+                    EditorStyles.miniLabel);
+            }
+            else
+            {
+                GUI.Label(new Rect(lineX, lineY, lineW, 16f), "Manual W: n/a", EditorStyles.miniLabel);
+            }
+            lineY += 16f;
+
+            PSDMatchModel model = GetStatusModel();
+            if (model != null && model.weights != null && model.weights.Length >= 3)
+            {
+                GUI.Label(new Rect(lineX, lineY, lineW, 16f),
+                    $"ML W (Dist/Size/Type): {model.weights[0]:F3}, {model.weights[1]:F3}, {model.weights[2]:F3}",
+                    EditorStyles.miniLabel);
+            }
+            else
+            {
+                GUI.Label(new Rect(lineX, lineY, lineW, 16f), "ML W (Dist/Size/Type): n/a", EditorStyles.miniLabel);
+            }
+        }
+
+        private PSDMatchModel GetStatusModel()
+        {
+            if (config == null) return null;
+            if (string.IsNullOrEmpty(config.autoLearnModelPath)) return null;
+
+            if (statusMlModelPath != config.autoLearnModelPath)
+            {
+                statusMlModelPath = config.autoLearnModelPath;
+                statusMlModel = null;
+                statusMlModelNextCheck = 0;
+            }
+
+            if (EditorApplication.timeSinceStartup >= statusMlModelNextCheck)
+            {
+                statusMlModel = PSDMatchAutoLearn.TryLoadModel(config);
+                statusMlModelNextCheck = EditorApplication.timeSinceStartup + 1.0;
+            }
+
+            return statusMlModel;
         }
 
         private void DrawOutline(Rect r, Color c, float w = 1)
