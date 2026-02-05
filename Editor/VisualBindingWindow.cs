@@ -32,6 +32,8 @@ namespace PSDImporter
         private Object psdDataFile;
         private GameObject targetRoot;
         private PSDImportConfig config;
+        private enum ImportMode { Create, Restore }
+        private ImportMode importMode = ImportMode.Restore;
 
         // --- 数据 ---
         private PSDData cachedPsdData;
@@ -373,7 +375,11 @@ namespace PSDImporter
 
             scrollPosPrefab = EditorGUILayout.BeginScrollView(scrollPosPrefab);
 
-            if (prefabNodes.Count == 0) GUILayout.Label("请先指定 Target Root", EditorStyles.centeredGreyMiniLabel);
+            if (prefabNodes.Count == 0)
+            {
+                string msg = importMode == ImportMode.Create ? "Create mode does not need Target Root" : "Please assign Target Root";
+                GUILayout.Label(msg, EditorStyles.centeredGreyMiniLabel);
+            }
 
             foreach (var node in prefabNodes)
             {
@@ -412,48 +418,75 @@ namespace PSDImporter
         // =================================================================================
         // 顶部 & 底部栏 (使用 GUILayout)
         // =================================================================================
-        private void DrawToolbar()
+                private void DrawToolbar()
         {
-            EditorGUILayout.BeginHorizontal(EditorStyles.toolbar, GUILayout.Height(TOOLBAR_H)); // 强制高度
-            GUILayout.Label("数据源:", GUILayout.Width(50));
+            EditorGUILayout.BeginHorizontal(EditorStyles.toolbar, GUILayout.Height(TOOLBAR_H)); // Fixed height
+            GUILayout.Label("Mode", GUILayout.Width(30));
+            var newMode = (ImportMode)EditorGUILayout.EnumPopup(importMode, GUILayout.Width(90));
+            if (newMode != importMode)
+            {
+                importMode = newMode;
+                OnModeChanged();
+            }
+            GUILayout.Space(6);
+            GUILayout.Label("PSD Data", GUILayout.Width(50));
             psdDataFile = EditorGUILayout.ObjectField(psdDataFile, typeof(Object), false, GUILayout.Width(150));
+            if (importMode == ImportMode.Restore)
+            {
+                GUILayout.Space(10);
+                GUILayout.Label("Target Root", GUILayout.Width(70));
+                targetRoot = (GameObject)EditorGUILayout.ObjectField(targetRoot, typeof(GameObject), true, GUILayout.Width(150));
+            }
             GUILayout.Space(10);
-            GUILayout.Label("目标根节点:", GUILayout.Width(70));
-            targetRoot = (GameObject)EditorGUILayout.ObjectField(targetRoot, typeof(GameObject), true, GUILayout.Width(150));
-            GUILayout.Space(10);
-            GUILayout.Label("配置:", GUILayout.Width(40));
+            GUILayout.Label("Config:", GUILayout.Width(40));
             config = (PSDImportConfig)EditorGUILayout.ObjectField(config, typeof(PSDImportConfig), false, GUILayout.Width(120));
-            if (GUILayout.Button("加载 / 重置", EditorStyles.toolbarButton, GUILayout.Width(100))) LoadData();
+            if (GUILayout.Button("Load / Refresh", EditorStyles.toolbarButton, GUILayout.Width(100))) LoadData();
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
         }
-
-        private void DrawBottomBar()
+                private void DrawBottomBar()
         {
             GUILayout.BeginHorizontal("box", GUILayout.Height(BOTTOM_H));
             GUILayout.FlexibleSpace();
-            GUI.backgroundColor = new Color(0.4f, 0.9f, 0.4f);
-            if (GUILayout.Button("应用所有绑定 (Apply & Save)", GUILayout.Height(24), GUILayout.Width(200))) ApplyBindings();
+            if (importMode == ImportMode.Create)
+            {
+                GUI.backgroundColor = new Color(0.35f, 0.7f, 1f);
+                GUI.enabled = IsValidPsdDataFile();
+                if (GUILayout.Button("Create UI", GUILayout.Height(24), GUILayout.Width(160))) CreateNewUI();
+            }
+            else
+            {
+                GUI.backgroundColor = new Color(0.4f, 0.9f, 0.4f);
+                GUI.enabled = IsValidPsdDataFile() && targetRoot != null;
+                if (GUILayout.Button("Apply All (Save)", GUILayout.Height(24), GUILayout.Width(200))) ApplyBindings();
+            }
+            GUI.enabled = true;
             GUI.backgroundColor = Color.white;
             GUILayout.EndHorizontal();
         }
-
         // =================================================================================
         // 数据逻辑 (保持不变)
         // =================================================================================
         private void LoadData()
         {
-            if (psdDataFile == null) return;
+            if (!IsValidPsdDataFile()) return;
             string path = AssetDatabase.GetAssetPath(psdDataFile);
             cachedPsdData = PSDLoader.ReadJson(path);
             if (cachedPsdData == null) return;
 
-            string dir = Path.GetDirectoryName(path);
-            string name = Path.GetFileNameWithoutExtension(path) + "_Binding.asset";
-            string assetPath = Path.Combine(dir, name);
-            bindingAsset = AssetDatabase.LoadAssetAtPath<PSDBindingData>(assetPath);
-            if (bindingAsset == null) { bindingAsset = CreateInstance<PSDBindingData>(); AssetDatabase.CreateAsset(bindingAsset, assetPath); }
-            bindingAsset.BuildCache();
+            if (importMode == ImportMode.Restore)
+            {
+                string dir = Path.GetDirectoryName(path);
+                string name = Path.GetFileNameWithoutExtension(path) + "_Binding.asset";
+                string assetPath = Path.Combine(dir, name);
+                bindingAsset = AssetDatabase.LoadAssetAtPath<PSDBindingData>(assetPath);
+                if (bindingAsset == null) { bindingAsset = CreateInstance<PSDBindingData>(); AssetDatabase.CreateAsset(bindingAsset, assetPath); }
+                bindingAsset.BuildCache();
+            }
+            else
+            {
+                bindingAsset = null;
+            }
 
             bindings.Clear();
             textureCache.Clear();
@@ -465,8 +498,16 @@ namespace PSDImporter
                     bindings.Add(new BindingPairViewModel() { psdItem = item, unityNode = null, score = 0, isConfirmed = false, statusInfo = "等待匹配", isIdMatched = false, depth = 0 });
                 }
             }
-            RefreshPrefabHierarchy();
-            if (targetRoot != null) RunAutoMatch();
+            if (importMode == ImportMode.Restore)
+            {
+                RefreshPrefabHierarchy();
+                if (targetRoot != null) RunAutoMatch();
+            }
+            else
+            {
+                prefabNodes.Clear();
+                selectedPrefabNode = null;
+            }
             Repaint();
         }
         private void RefreshPrefabHierarchy()
@@ -542,16 +583,17 @@ namespace PSDImporter
             {
                 if (!matchedBindings.Contains(cand.bind) && !occupiedNodes.Contains(cand.node))
                 {
-                    cand.bind.unityNode = cand.node; cand.bind.score = cand.score; cand.bind.statusInfo = cand.reason ?? $"智能评分: {cand.score:F0}"; cand.bind.isIdMatched = cand.score > 9000f;
+                    cand.bind.unityNode = cand.node; cand.bind.score = cand.score; cand.bind.statusInfo = cand.reason ?? $"Score: {cand.score:F0}"; cand.bind.isIdMatched = cand.score > 9000f;
                     if (cand.isPerfect) cand.bind.isConfirmed = true;
                     matchedBindings.Add(cand.bind); occupiedNodes.Add(cand.node);
                 }
             }
-            foreach (var bind in bindings) if (!matchedBindings.Contains(bind)) bind.statusInfo = "未找到合适节点";
+            foreach (var bind in bindings) if (!matchedBindings.Contains(bind)) bind.statusInfo = "No suitable node found";
             UpdatePrefabStatus();
         }
         private void ApplyBindings()
         {
+            if (importMode != ImportMode.Restore) return;
             if (targetRoot == null) return;
             Undo.RegisterFullObjectHierarchyUndo(targetRoot, "Apply Visual Bindings");
             int count = 0;
@@ -579,6 +621,35 @@ namespace PSDImporter
 
             ShowNotification(new GUIContent($"完成! ({count} 节点)"));
             UpdatePrefabStatus();
+        }
+
+        private void CreateNewUI()
+        {
+            if (!IsValidPsdDataFile()) return;
+            string path = AssetDatabase.GetAssetPath(psdDataFile);
+            var data = PSDLoader.ReadJson(path);
+            if (data == null) return;
+            var useConfig = config != null ? config : ScriptableObject.CreateInstance<PSDImportConfig>();
+            PSDCreateor.CreateUGUI_GenerateMode(data, useConfig);
+            ShowNotification(new GUIContent("Created!"));
+        }
+
+        private void OnModeChanged()
+        {
+            if (importMode == ImportMode.Create)
+            {
+                targetRoot = null;
+                prefabNodes.Clear();
+                selectedPrefabNode = null;
+            }
+            Repaint();
+        }
+
+        private bool IsValidPsdDataFile()
+        {
+            if (psdDataFile == null) return false;
+            string path = AssetDatabase.GetAssetPath(psdDataFile);
+            return !string.IsNullOrEmpty(path) && path.EndsWith(".ps.data");
         }
 
         // Helpers

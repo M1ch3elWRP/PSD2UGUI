@@ -8,7 +8,8 @@ public class PSDImporterWindow : EditorWindow
     private GameObject targetRoot;
     private PSDImportConfig config; // 【新增】配置槽位
 
-    [MenuItem("PSDTools/Open Importer Window", priority = 0)]
+    // Deprecated: use VisualBindingWindow instead.
+    //[MenuItem("PSDTools/Open Importer Window", priority = 0)]
     public static void ShowWindow()
     {
         var window = GetWindow<PSDImporterWindow>("PSD Importer");
