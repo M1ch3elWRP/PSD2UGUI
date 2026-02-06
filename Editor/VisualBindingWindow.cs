@@ -55,6 +55,11 @@ namespace PSDImporter
         private Vector2 scrollPosPrefab;
         private float previewZoom = 0.2f;
         private Vector2 previewPan = Vector2.zero;
+        private float bindingViewHeight;
+        private float prefabViewHeight;
+        private bool pendingScrollToBinding;
+        private bool pendingScrollToPrefab;
+        private readonly Dictionary<int, bool> prefabFoldout = new Dictionary<int, bool>();
 
         // --- 【布局核心参数】 ---
         private float previewWidth = 450f;
@@ -139,6 +144,9 @@ namespace PSDImporter
 
             // C. 右侧树 Rect (占据剩余所有空间)
             Rect rectTree = new Rect(rectSplit2.xMax, currentY, position.width - rectSplit2.xMax, contentHeight);
+
+            bindingViewHeight = rectList.height;
+            prefabViewHeight = rectTree.height;
 
             // --- 3. 绘制区域内容 (使用 BeginArea 隔离) ---
 
@@ -321,6 +329,7 @@ namespace PSDImporter
             EditorGUILayout.EndHorizontal();
 
             // 滚动列表
+            float scrollViewHeight = Mathf.Max(0f, bindingViewHeight - 24f);
             scrollPosBinding = EditorGUILayout.BeginScrollView(scrollPosBinding);
 
             if (bindings.Count == 0) GUILayout.Label("暂无数据", EditorStyles.centeredGreyMiniLabel);
@@ -331,6 +340,16 @@ namespace PSDImporter
                 float rowHeight = 40f;
                 Rect rowRect = EditorGUILayout.BeginVertical(GUILayout.Height(rowHeight));
 
+                if (pendingScrollToBinding && bind == selectedBinding)
+                {
+                    float yMin = rowRect.y;
+                    float yMax = rowRect.y + rowRect.height;
+                    if (yMin < scrollPosBinding.y) scrollPosBinding.y = yMin;
+                    else if (yMax > scrollPosBinding.y + scrollViewHeight) scrollPosBinding.y = Mathf.Max(0f, yMax - scrollViewHeight);
+                    pendingScrollToBinding = false;
+                    Repaint();
+                }
+
                 if (bind == selectedBinding) EditorGUI.DrawRect(rowRect, new Color(0.2f, 0.5f, 0.8f, 0.5f));
                 else if (i % 2 == 0) EditorGUI.DrawRect(rowRect, new Color(0, 0, 0, 0.1f));
 
@@ -338,6 +357,9 @@ namespace PSDImporter
                 {
                     selectedBinding = bind;
                     selectedPrefabNode = bind.unityNode;
+                    pendingScrollToBinding = true;
+                    pendingScrollToPrefab = selectedPrefabNode != null;
+                    if (pendingScrollToPrefab) ExpandToPrefabNode(selectedPrefabNode);
                     Repaint();
                 }
 
@@ -385,6 +407,7 @@ namespace PSDImporter
             if (GUILayout.Button("刷新", EditorStyles.toolbarButton, GUILayout.Width(40))) RefreshPrefabHierarchy();
             EditorGUILayout.EndHorizontal();
 
+            float scrollViewHeight = Mathf.Max(0f, prefabViewHeight - 20f);
             scrollPosPrefab = EditorGUILayout.BeginScrollView(scrollPosPrefab);
 
             if (prefabNodes.Count == 0)
@@ -395,7 +418,21 @@ namespace PSDImporter
 
             foreach (var node in prefabNodes)
             {
+                if (!IsPrefabNodeVisible(node.transform)) continue;
                 Rect rowRect = EditorGUILayout.BeginHorizontal(GUILayout.Height(20));
+
+                bool hasChildren = node.transform != null && node.transform.childCount > 0;
+                bool expanded = IsPrefabExpanded(node.transform);
+
+                if (pendingScrollToPrefab && node.transform == selectedPrefabNode)
+                {
+                    float yMin = rowRect.y;
+                    float yMax = rowRect.y + rowRect.height;
+                    if (yMin < scrollPosPrefab.y) scrollPosPrefab.y = yMin;
+                    else if (yMax > scrollPosPrefab.y + scrollViewHeight) scrollPosPrefab.y = Mathf.Max(0f, yMax - scrollViewHeight);
+                    pendingScrollToPrefab = false;
+                    Repaint();
+                }
 
                 if (node.transform == selectedPrefabNode) EditorGUI.DrawRect(rowRect, new Color(0.2f, 0.5f, 0.8f, 0.5f));
 
@@ -403,6 +440,8 @@ namespace PSDImporter
                 {
                     selectedPrefabNode = node.transform;
                     selectedBinding = bindings.FirstOrDefault(b => b.unityNode == node.transform);
+                    pendingScrollToPrefab = true;
+                    pendingScrollToBinding = selectedBinding != null;
                     Repaint();
                 }
 
@@ -414,7 +453,14 @@ namespace PSDImporter
                     Event.current.Use();
                 }
 
-                GUILayout.Space(node.depth * 14 + 4);
+                int indent = node.depth * 14 + 4;
+                Rect foldRect = new Rect(rowRect.x + indent, rowRect.y + 2, 12, 16);
+                if (hasChildren)
+                {
+                    bool newExpanded = EditorGUI.Foldout(foldRect, expanded, GUIContent.none);
+                    if (newExpanded != expanded) SetPrefabExpanded(node.transform, newExpanded);
+                }
+                GUILayout.Space(indent + 12);
                 GUIContent icon = EditorGUIUtility.ObjectContent(node.transform.gameObject, typeof(Transform));
                 GUILayout.Label(icon.image, GUILayout.Width(16), GUILayout.Height(16));
 
@@ -539,6 +585,49 @@ namespace PSDImporter
             HashSet<Transform> boundSet = new HashSet<Transform>();
             foreach (var b in bindings) if (b.unityNode != null) boundSet.Add(b.unityNode);
             foreach (var node in prefabNodes) node.isBound = boundSet.Contains(node.transform);
+        }
+        private bool IsPrefabExpanded(Transform t)
+        {
+            if (t == null) return true;
+            int id = t.GetInstanceID();
+            bool expanded;
+            if (!prefabFoldout.TryGetValue(id, out expanded))
+            {
+                expanded = true;
+                prefabFoldout[id] = expanded;
+            }
+            return expanded;
+        }
+
+        private void SetPrefabExpanded(Transform t, bool expanded)
+        {
+            if (t == null) return;
+            prefabFoldout[t.GetInstanceID()] = expanded;
+        }
+
+        private bool IsPrefabNodeVisible(Transform t)
+        {
+            if (t == null) return false;
+            if (targetRoot == null) return true;
+            var current = t.parent;
+            while (current != null && current != targetRoot.transform)
+            {
+                if (!IsPrefabExpanded(current)) return false;
+                current = current.parent;
+            }
+            return true;
+        }
+
+        private void ExpandToPrefabNode(Transform t)
+        {
+            if (t == null) return;
+            var current = t.parent;
+            while (current != null)
+            {
+                SetPrefabExpanded(current, true);
+                if (targetRoot != null && current == targetRoot.transform) break;
+                current = current.parent;
+            }
         }
         private void LoadTextureToCache(PicData item)
         {
