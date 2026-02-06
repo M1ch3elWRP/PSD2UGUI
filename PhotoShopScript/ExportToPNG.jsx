@@ -14,9 +14,8 @@ var groupsAsSkins = false;
 var trimWhitespace = true; 
 var onlyTagged = true;
 // Ignore far tiny outliers when trimming @Img groups
-var tinyOutlierArea = 64;
-var tinyOutlierMaxSide = 16;
-var tinyOutlierMaxDistance = 64;
+var tinyOutlierArea = 1000;
+var tinyOutlierMaxDistance = 100;
 var saveDir = "C:/Images/";
 
 // --- IDs ---
@@ -575,8 +574,7 @@ function collectVisibleLeafBounds(layer, outArr) {
             var h = Math.max(0, bot - t);
             if (w <= 0 || h <= 0) return;
             var area = w * h;
-            var maxSide = Math.max(w, h);
-            var isTiny = (area <= tinyOutlierArea && maxSide <= tinyOutlierMaxSide);
+            var isTiny = (area <= tinyOutlierArea);
             outArr.push({ bounds: { l: l, t: t, r: r, b: bot }, isTiny: isTiny });
         } catch (e) {}
         return;
