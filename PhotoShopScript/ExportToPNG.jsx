@@ -13,6 +13,10 @@ var pngScale = 1;
 var groupsAsSkins = false;
 var trimWhitespace = true; 
 var onlyTagged = true;
+// Ignore far tiny outliers when trimming @Img groups
+var tinyOutlierArea = 64;
+var tinyOutlierMaxSide = 16;
+var tinyOutlierMaxDistance = 64;
 var saveDir = "C:/Images/";
 
 // --- IDs ---
@@ -192,6 +196,10 @@ function run() {
                             isSmartObjectLayer = (layer.typename == "ArtLayer" && layer.kind == LayerKind.SMARTOBJECT);
                         } catch (e) {}
                     }
+                    var customBounds = null;
+                    if (useMergedBounds && layer.typename == "LayerSet") {
+                        customBounds = getGroupBoundsIgnoringOutliers(layer);
+                    }
                     if (!(useLayerBounds && isSmartObjectLayer)) {
                         layer = prepareLayerForExport(layer, suffixType);
                     }
@@ -204,7 +212,7 @@ function run() {
                         useMergedBounds = true;
                     }
                     if (useLayerBounds) {
-                        var b = layer.bounds;
+                        var b = customBounds ? customBounds : layer.bounds;
                         var l = b[0].as("px");
                         var t = b[1].as("px");
                         var r = b[2].as("px");
@@ -518,6 +526,99 @@ function cacheVisibleState(doc) {
     for (var i = 0; i < doc.layers.length; i++) {
         cacheVisibleStateRec(doc.layers[i]);
     }
+}
+
+function getGroupBoundsIgnoringOutliers(layerSet) {
+    var items = [];
+    collectVisibleLeafBounds(layerSet, items);
+    if (items.length == 0) return layerSet.bounds;
+
+    var mainBounds = null;
+    for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (!it.isTiny) {
+            mainBounds = unionBounds(mainBounds, it.bounds);
+        }
+    }
+    if (mainBounds == null) {
+        // all tiny, fallback to full union
+        for (var j = 0; j < items.length; j++) {
+            mainBounds = unionBounds(mainBounds, items[j].bounds);
+        }
+        return boundsToArray(mainBounds);
+    }
+
+    var finalBounds = mainBounds;
+    for (var k = 0; k < items.length; k++) {
+        var it2 = items[k];
+        if (!it2.isTiny) continue;
+        var dist = rectDistance(mainBounds, it2.bounds);
+        if (dist <= tinyOutlierMaxDistance) {
+            finalBounds = unionBounds(finalBounds, it2.bounds);
+        }
+    }
+    return boundsToArray(finalBounds);
+}
+
+function collectVisibleLeafBounds(layer, outArr) {
+    if (!layer || !outArr) return;
+    if (!layer.visible) return;
+
+    if (layer.typename == "ArtLayer") {
+        try {
+            var b = layer.bounds;
+            var l = b[0].as("px");
+            var t = b[1].as("px");
+            var r = b[2].as("px");
+            var bot = b[3].as("px");
+            var w = Math.max(0, r - l);
+            var h = Math.max(0, bot - t);
+            if (w <= 0 || h <= 0) return;
+            var area = w * h;
+            var maxSide = Math.max(w, h);
+            var isTiny = (area <= tinyOutlierArea && maxSide <= tinyOutlierMaxSide);
+            outArr.push({ bounds: { l: l, t: t, r: r, b: bot }, isTiny: isTiny });
+        } catch (e) {}
+        return;
+    }
+
+    if (layer.typename == "LayerSet") {
+        for (var i = 0; i < layer.layers.length; i++) {
+            collectVisibleLeafBounds(layer.layers[i], outArr);
+        }
+    }
+}
+
+function unionBounds(a, b) {
+    if (!a && b) return { l: b.l, t: b.t, r: b.r, b: b.b };
+    if (!b && a) return { l: a.l, t: a.t, r: a.r, b: a.b };
+    if (!a && !b) return null;
+    return {
+        l: Math.min(a.l, b.l),
+        t: Math.min(a.t, b.t),
+        r: Math.max(a.r, b.r),
+        b: Math.max(a.b, b.b)
+    };
+}
+
+function rectDistance(a, b) {
+    var dx = 0;
+    if (b.r < a.l) dx = a.l - b.r;
+    else if (b.l > a.r) dx = b.l - a.r;
+    var dy = 0;
+    if (b.b < a.t) dy = a.t - b.b;
+    else if (b.t > a.b) dy = b.t - a.b;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+function boundsToArray(b) {
+    // return array-like object with as("px") compatible access
+    return [
+        UnitValue(b.l, "px"),
+        UnitValue(b.t, "px"),
+        UnitValue(b.r, "px"),
+        UnitValue(b.b, "px")
+    ];
 }
 
 function cacheVisibleStateRec(layer) {
