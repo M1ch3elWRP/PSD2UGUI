@@ -13,6 +13,9 @@ var pngScale = 1;
 var groupsAsSkins = false;
 var trimWhitespace = true; 
 var onlyTagged = true;
+var ignoreTinyPixels = false;
+var tinyPixelArea = 64;
+var tinyPixelMaxSide = 16;
 var saveDir = "C:/Images/";
 
 // --- IDs ---
@@ -26,6 +29,9 @@ const trimWhitespaceID = stringIDToTypeID("trimWhitespace");
 const pngScaleID = stringIDToTypeID("pngScale");
 const saveDirID = stringIDToTypeID("saveDir");
 const onlyTaggedID = stringIDToTypeID("onlyTagged");
+const ignoreTinyPixelsID = stringIDToTypeID("ignoreTinyPixels");
+const tinyPixelAreaID = stringIDToTypeID("tinyPixelArea");
+const tinyPixelMaxSideID = stringIDToTypeID("tinyPixelMaxSide");
 
 var psdName = "";
 var originalDoc;
@@ -181,6 +187,11 @@ function run() {
                     
                     // 2. 记状态
                     var preTrimState = exportDoc.activeHistoryState;
+
+                    // 2.0 可选：忽略组内极小离散像素
+                    if (ignoreTinyPixels && layer.typename == "LayerSet") {
+                        hideTinyChildrenForTrim(layer);
+                    }
 
                     // 2.1 合并/栅格化（避免组或智能对象导出黑图）
                     var isSmartObjectLayer = (layer.typename == "ArtLayer" && layer.kind == LayerKind.SMARTOBJECT);
@@ -508,6 +519,42 @@ function setLayerSetChildrenVisible(layerSet) {
     }
 }
 
+function hideTinyChildrenForTrim(layerSet) {
+    if (!layerSet || layerSet.typename != "LayerSet") return;
+    for (var i = 0; i < layerSet.layers.length; i++) {
+        var child = layerSet.layers[i];
+        if (child.typename == "LayerSet") {
+            if (shouldHideTinyLayer(child)) {
+                child.visible = false;
+                continue;
+            }
+            hideTinyChildrenForTrim(child);
+            continue;
+        }
+        if (child.typename == "ArtLayer") {
+            if (child.kind == LayerKind.TEXT) continue;
+            if (shouldHideTinyLayer(child)) child.visible = false;
+        }
+    }
+}
+
+function shouldHideTinyLayer(layer) {
+    try {
+        var b = layer.bounds;
+        var l = b[0].as("px");
+        var t = b[1].as("px");
+        var r = b[2].as("px");
+        var bot = b[3].as("px");
+        var w = Math.max(0, r - l);
+        var h = Math.max(0, bot - t);
+        var area = w * h;
+        var maxSide = Math.max(w, h);
+        return (area > 0 && area <= tinyPixelArea && maxSide <= tinyPixelMaxSide);
+    } catch (e) {
+        return false;
+    }
+}
+
 function cacheVisibleState(doc) {
     visibleMap = {};
     for (var i = 0; i < doc.layers.length; i++) {
@@ -636,6 +683,14 @@ function showDialog() {
     var chkIgnore = p2.add("checkbox", undefined, " Ignore Hidden"); chkIgnore.value = ignoreHiddenLayers;
     var chkGroups = p2.add("checkbox", undefined, " Use Groups"); chkGroups.value = groupsAsSkins;
     var chkTrim = p2.add("checkbox", undefined, " Trim Whitespace"); chkTrim.value = trimWhitespace;
+    var chkTiny = p2.add("checkbox", undefined, " Ignore Tiny Pixels"); chkTiny.value = ignoreTinyPixels;
+    var grpTiny = p2.add("group");
+    grpTiny.add("statictext", undefined, "Tiny Area:");
+    var txtTinyArea = grpTiny.add("edittext", undefined, tinyPixelArea); txtTinyArea.characters = 4;
+    grpTiny.add("statictext", undefined, "Max Side:");
+    var txtTinySide = grpTiny.add("edittext", undefined, tinyPixelMaxSide); txtTinySide.characters = 3;
+    grpTiny.enabled = chkTiny.value;
+    chkTiny.onClick = function() { grpTiny.enabled = chkTiny.value; };
     var chkTagged = p2.add("checkbox", undefined, " Only Export @ Tagged"); chkTagged.value = onlyTagged;
 
     var grpScale = dlg.add("group");
@@ -661,6 +716,11 @@ function showDialog() {
         ignoreHiddenLayers = chkIgnore.value;
         groupsAsSkins = chkGroups.value;
         trimWhitespace = chkTrim.value;
+        ignoreTinyPixels = chkTiny.value;
+        var vArea = parseInt(txtTinyArea.text, 10);
+        var vSide = parseInt(txtTinySide.text, 10);
+        if (!isNaN(vArea)) tinyPixelArea = Math.max(0, vArea);
+        if (!isNaN(vSide)) tinyPixelMaxSide = Math.max(0, vSide);
         onlyTagged = writeJson ? true : chkTagged.value;
         pngScale = parseFloat(txtScale.text) / 100;
         saveDir = txtPath.text;
@@ -684,8 +744,23 @@ function showDialog() {
     dlg.show();
 }
 
-function loadSettings() { try{settings=app.getCustomOptions(settingsID);}catch(e){return;} if(settings.hasKey(saveDirID)) saveDir=settings.getString(saveDirID); if(settings.hasKey(onlyTaggedID)) onlyTagged=settings.getBoolean(onlyTaggedID); }
-function saveSettings() { var s=new ActionDescriptor(); s.putString(saveDirID, saveDir); s.putBoolean(onlyTaggedID, onlyTagged); app.putCustomOptions(settingsID, s, true); }
+function loadSettings() {
+    try { settings = app.getCustomOptions(settingsID); } catch (e) { return; }
+    if (settings.hasKey(saveDirID)) saveDir = settings.getString(saveDirID);
+    if (settings.hasKey(onlyTaggedID)) onlyTagged = settings.getBoolean(onlyTaggedID);
+    if (settings.hasKey(ignoreTinyPixelsID)) ignoreTinyPixels = settings.getBoolean(ignoreTinyPixelsID);
+    if (settings.hasKey(tinyPixelAreaID)) tinyPixelArea = settings.getInteger(tinyPixelAreaID);
+    if (settings.hasKey(tinyPixelMaxSideID)) tinyPixelMaxSide = settings.getInteger(tinyPixelMaxSideID);
+}
+function saveSettings() {
+    var s = new ActionDescriptor();
+    s.putString(saveDirID, saveDir);
+    s.putBoolean(onlyTaggedID, onlyTagged);
+    s.putBoolean(ignoreTinyPixelsID, ignoreTinyPixels);
+    s.putInteger(tinyPixelAreaID, tinyPixelArea);
+    s.putInteger(tinyPixelMaxSideID, tinyPixelMaxSide);
+    app.putCustomOptions(settingsID, s, true);
+}
 function scaleImage() { activeDocument.resizeImage(UnitValue(activeDocument.width.as("px")*pngScale,"px"), null, 300, ResampleMethod.BICUBICSHARPER); }
 function deleteDocumentAncestorsMetadata() {}
 function hasFilePath() { return originalDoc.path; }
