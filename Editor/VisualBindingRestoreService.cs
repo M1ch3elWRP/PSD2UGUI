@@ -68,23 +68,11 @@ namespace PSDImporter
                 bool forceCandidateLog = matchConfig.forceCandidateLog;
                 bool logCandidatesInLoop = logDetail && !forceCandidateLog;
 
-                var mlConfig = matchConfig.mlConfig;
-                bool useMlScore = mlConfig != null && mlConfig.useMlScore;
+                // ML path is temporarily disabled. Always use manual weighted scoring.
+                bool useMlScore = false;
                 PSDMatchModel mlModel = null;
-                if (useMlScore)
-                {
-                    mlModel = PSDMatchAutoLearn.TryLoadModel(mlConfig);
-                    if (mlModel == null)
-                    {
-                        useMlScore = false;
-                        if (logDetail)
-                        {
-                            Debug.LogWarning("[Match] ML model not found. Fallback to manual weights.");
-                        }
-                    }
-                }
 
-                float perfectThreshold = useMlScore ? 80f : 150f;
+                float perfectThreshold = 150f;
                 HashSet<Transform> occupiedNodes = new HashSet<Transform>();
                 HashSet<BindingPairViewModel> matchedBindings = new HashSet<BindingPairViewModel>();
 
@@ -457,11 +445,7 @@ namespace PSDImporter
             }
             AssetDatabase.SaveAssets();
 
-            var mlConfig = config != null ? config.mlConfig : null;
-            if (mlConfig != null && mlConfig.autoLearnEnabled)
-            {
-                PSDMatchAutoLearn.RecordAndMaybeTrain(psdPath, cachedPsdData, targetRoot.transform, bindings, config, mlConfig);
-            }
+            // ML auto learn is temporarily disabled.
 
             return count;
         }

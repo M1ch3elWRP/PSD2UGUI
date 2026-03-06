@@ -100,6 +100,7 @@ namespace PSDImporter
 
         [Header("Auto Learn (ML)")]
         [Tooltip("Optional ML config asset.")]
+        [HideInInspector]
         public PSDMatchMLConfig mlConfig;
     }
 }

@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using UnityEditor;
@@ -64,12 +63,6 @@ namespace PSDImporter
         private static readonly Color PsdOutlineColor = new Color(0.25f, 0.65f, 1f, 0.7f);
         private static readonly Color PrefabOutlineColor = new Color(1f, 0.7f, 0.2f, 0.75f);
 
-        private PSDMatchModel statusMlModel;
-        private string statusMlModelPath;
-        private double statusMlModelNextCheck;
-        private int statusDatasetScreenCount;
-        private string statusDatasetPath;
-        private double statusDatasetNextCheck;
 
         // 拖拽状态
         private bool isResizingPreview = false;
@@ -699,7 +692,7 @@ namespace PSDImporter
         private void DrawStatusPanel(float viewWidth)
         {
             const float panelW = 320f;
-            const float panelH = 108f;
+            const float panelH = 76f;
             float x = Mathf.Max(6f, viewWidth - panelW - 6f);
             float y = 6f;
             Rect panelRect = new Rect(x, y, panelW, panelH);
@@ -714,82 +707,15 @@ namespace PSDImporter
             GUI.Label(new Rect(lineX, lineY, lineW, 16f), "Status", EditorStyles.boldLabel);
             lineY += 18f;
 
-            int screenCount = GetStatusScreenCount();
-            GUI.Label(new Rect(lineX, lineY, lineW, 16f), $"Screens: {screenCount}", EditorStyles.miniLabel);
+            int total = bindings != null ? bindings.Count : 0;
+            int matched = bindings != null ? bindings.Count(b => b != null && b.unityNode != null) : 0;
+            int confirmed = bindings != null ? bindings.Count(b => b != null && b.isConfirmed) : 0;
+
+            GUI.Label(new Rect(lineX, lineY, lineW, 16f), $"Bindings: {matched}/{total}", EditorStyles.miniLabel);
             lineY += 16f;
-
-            PSDMatchModel model = GetStatusModel();
-            string updatedAt = "n/a";
-            if (model != null && !string.IsNullOrEmpty(model.trainedAtUtc))
-            {
-                if (DateTime.TryParse(model.trainedAtUtc, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var utc))
-                {
-                    updatedAt = utc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
-                }
-                else
-                {
-                    updatedAt = model.trainedAtUtc;
-                }
-            }
-            GUI.Label(new Rect(lineX, lineY, lineW, 16f), $"Model Updated: {updatedAt}", EditorStyles.miniLabel);
+            GUI.Label(new Rect(lineX, lineY, lineW, 16f), $"Confirmed: {confirmed}", EditorStyles.miniLabel);
             lineY += 16f;
-
-            string acc = model != null ? model.trainingAccuracy.ToString("P1") : "n/a";
-            GUI.Label(new Rect(lineX, lineY, lineW, 16f), $"Train Acc: {acc}", EditorStyles.miniLabel);
-            lineY += 16f;
-
-            if (model != null && model.weights != null && model.weights.Length >= 3)
-            {
-                GUI.Label(new Rect(lineX, lineY, lineW, 16f),
-                    $"ML W (Dist/Size/Type): {model.weights[0]:F3}, {model.weights[1]:F3}, {model.weights[2]:F3}",
-                    EditorStyles.miniLabel);
-            }
-            else
-            {
-                GUI.Label(new Rect(lineX, lineY, lineW, 16f), "ML W (Dist/Size/Type): n/a", EditorStyles.miniLabel);
-            }
-        }
-
-        private PSDMatchModel GetStatusModel()
-        {
-            if (config == null || config.mlConfig == null) return null;
-            if (string.IsNullOrEmpty(config.mlConfig.modelPath)) return null;
-
-            if (statusMlModelPath != config.mlConfig.modelPath)
-            {
-                statusMlModelPath = config.mlConfig.modelPath;
-                statusMlModel = null;
-                statusMlModelNextCheck = 0;
-            }
-
-            if (EditorApplication.timeSinceStartup >= statusMlModelNextCheck)
-            {
-                statusMlModel = PSDMatchAutoLearn.TryLoadModel(config.mlConfig);
-                statusMlModelNextCheck = EditorApplication.timeSinceStartup + 1.0;
-            }
-
-            return statusMlModel;
-        }
-
-        private int GetStatusScreenCount()
-        {
-            if (config == null || config.mlConfig == null) return 0;
-            if (string.IsNullOrEmpty(config.mlConfig.datasetPath)) return 0;
-
-            if (statusDatasetPath != config.mlConfig.datasetPath)
-            {
-                statusDatasetPath = config.mlConfig.datasetPath;
-                statusDatasetScreenCount = 0;
-                statusDatasetNextCheck = 0;
-            }
-
-            if (EditorApplication.timeSinceStartup >= statusDatasetNextCheck)
-            {
-                statusDatasetScreenCount = PSDMatchAutoLearn.TryGetDatasetScreenCount(config.mlConfig);
-                statusDatasetNextCheck = EditorApplication.timeSinceStartup + 1.0;
-            }
-
-            return statusDatasetScreenCount;
+            GUI.Label(new Rect(lineX, lineY, lineW, 16f), "ML status hidden (temporarily disabled)", EditorStyles.miniLabel);
         }
 
         private void DrawOutline(Rect r, Color c, float w = 1)

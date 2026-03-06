@@ -6,7 +6,7 @@ namespace PSDImporter
 {
     public static class PSDMatchMLMenu
     {
-        [MenuItem("PSDTools/ML/Train Match Model")]
+        // ML training menu is temporarily hidden.
         private static void TrainMatchModel()
         {
             string datasetPath = EditorUtility.OpenFilePanel("Select Match Dataset (JSON)", "", "json");
