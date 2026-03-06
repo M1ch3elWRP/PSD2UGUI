@@ -38,36 +38,18 @@ namespace PSDImporter
 
             var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(nodeRect, root);
             var psdGeom = PSDMatchGeometry.BuildPsdGeom(item, psdWidth, psdHeight);
+            bool typeMatch = IsTypeMatch(node, item.uiType);
+            return CalculateMatchScoreFromGeometry(nodeGeom, psdGeom, typeMatch, config);
+        }
 
-            // A. 位置分
-            float scorePos = 0f;
-            float dist = Vector2.Distance(nodeGeom.centerLocal, psdGeom.centerLocal);
-
-            // 只有在阈值内才给分
-            if (dist < config.maxDistanceError)
-                scorePos = (1f - (dist / config.maxDistanceError)) * 100f;
-
-            // B. 尺寸分
-            float scoreSize = 0f;
-            float diffW = Mathf.Abs(nodeGeom.sizeLocal.x - psdGeom.sizeLocal.x);
-            float diffH = Mathf.Abs(nodeGeom.sizeLocal.y - psdGeom.sizeLocal.y);
-
-            if ((diffW + diffH) < config.maxSizeDiff)
-                scoreSize = (1f - ((diffW + diffH) / config.maxSizeDiff)) * 100f;
-
-            // C. 类型分
-            float scoreType = IsTypeMatch(node, item.uiType) ? 100f : 0f;
-
-            // D. 综合算分
-            // 只有当位置或尺寸至少有一项匹配时，才计算总分（防止离谱的误配）
-            if (scorePos > 0 || scoreSize > 0)
-            {
-                return (scorePos * config.weightPosition) +
-                       (scoreSize * config.weightSize) +
-                       (scoreType * config.weightType);
-            }
-
-            return 0f;
+        public static float CalculateMatchScoreFromGeometry(
+            PSDMatchGeometry.NodeGeom nodeGeom,
+            PSDMatchGeometry.PsdGeom psdGeom,
+            bool isTypeMatch,
+            PSDImportConfig config)
+        {
+            var input = PSDMatchScoring.ScoringInput.FromConfig(nodeGeom, psdGeom, isTypeMatch, config);
+            return PSDMatchScoring.Evaluate(input).total;
         }
 
         // ========================================================================

@@ -6,8 +6,6 @@ namespace PSDImporter
     public static class PSDMatchFeatureExtractor
     {
         public const int FeatureCount = 6;
-        private const float AnchorNorm = 0.70710678f;
-
         public static float[] ExtractFeatures(PicData item, RectTransform node, Transform root, int psdWidth, int psdHeight, float maxDistanceError, float maxSizeDiff, int maxDepthDiff)
         {
             var features = new float[FeatureCount];
@@ -19,30 +17,29 @@ namespace PSDImporter
             var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(node, rootRect);
             var psdGeom = PSDMatchGeometry.BuildPsdGeom(item, psdWidth, psdHeight);
 
-            float dist = Vector2.Distance(nodeGeom.centerLocal, psdGeom.centerLocal);
-            float distNorm = (maxDistanceError > 0f) ? Mathf.Clamp01(dist / maxDistanceError) : 1f;
+            bool typeMatch = IsTypeMatch(node, item.uiType);
+            bool inLayout = node.GetComponentInParent<LayoutGroup>() != null;
+            return ExtractFeaturesFromGeometry(nodeGeom, psdGeom, typeMatch, inLayout, maxDistanceError, maxSizeDiff, maxDepthDiff);
+        }
 
-            float sizeDiff = Mathf.Abs(nodeGeom.sizeLocal.x - psdGeom.sizeLocal.x) + Mathf.Abs(nodeGeom.sizeLocal.y - psdGeom.sizeLocal.y);
-            float sizeNorm = (maxSizeDiff > 0f) ? Mathf.Clamp01(sizeDiff / maxSizeDiff) : 1f;
+        public static float[] ExtractFeaturesFromGeometry(
+            PSDMatchGeometry.NodeGeom nodeGeom,
+            PSDMatchGeometry.PsdGeom psdGeom,
+            bool isTypeMatch,
+            bool inLayout,
+            float maxDistanceError,
+            float maxSizeDiff,
+            int maxDepthDiff)
+        {
+            var features = new float[FeatureCount];
+            var geometry = PSDMatchScoring.BuildGeometryBreakdown(nodeGeom, psdGeom, maxDistanceError, maxSizeDiff, maxDepthDiff);
 
-            float typeMatch = IsTypeMatch(node, item.uiType) ? 1f : 0f;
-            float inLayout = node.GetComponentInParent<LayoutGroup>() != null ? 1f : 0f;
-
-            int depthPsd = psdGeom.depth;
-            int depthNode = nodeGeom.depth;
-            float depthNorm = maxDepthDiff > 0 ? Mathf.Clamp01(Mathf.Abs(depthPsd - depthNode) / (float)maxDepthDiff) : 1f;
-            float sameDepth = 1f - depthNorm;
-
-            float anchorDist = Vector2.Distance(nodeGeom.anchorCenter, psdGeom.anchorCenter);
-            float anchorDiff = Mathf.Clamp01(anchorDist / AnchorNorm);
-
-            features[0] = distNorm;
-            features[1] = sizeNorm;
-            features[2] = typeMatch;
-            features[3] = inLayout;
-            features[4] = sameDepth;
-            features[5] = anchorDiff;
-
+            features[0] = geometry.distNorm;
+            features[1] = geometry.sizeNorm;
+            features[2] = isTypeMatch ? 1f : 0f;
+            features[3] = inLayout ? 1f : 0f;
+            features[4] = geometry.sameDepth;
+            features[5] = geometry.anchorDiff;
             return features;
         }
 

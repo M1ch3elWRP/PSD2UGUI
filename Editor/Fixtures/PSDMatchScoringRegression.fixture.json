@@ -1,0 +1,55 @@
+{
+  "maxDistanceError": 300.0,
+  "maxSizeDiff": 250.0,
+  "maxDepthDiff": 8,
+  "weightPosition": 0.7,
+  "weightSize": 0.2,
+  "weightType": 0.1,
+  "cases": [
+    {
+      "name": "near-perfect-image",
+      "isTypeMatch": true,
+      "inLayout": false,
+      "nodeCenter": { "x": 10.0, "y": -20.0 },
+      "nodeSize": { "x": 100.0, "y": 40.0 },
+      "nodeAnchor": { "x": 0.5, "y": 0.5 },
+      "nodePivot": { "x": 0.5, "y": 0.5 },
+      "nodeDepth": 2,
+      "psdCenter": { "x": 12.0, "y": -18.0 },
+      "psdSize": { "x": 102.0, "y": 38.0 },
+      "psdAnchor": { "x": 0.5, "y": 0.5 },
+      "psdPivot": { "x": 0.5, "y": 0.5 },
+      "psdDepth": 2
+    },
+    {
+      "name": "depth-and-anchor-offset",
+      "isTypeMatch": true,
+      "inLayout": true,
+      "nodeCenter": { "x": -140.0, "y": 80.0 },
+      "nodeSize": { "x": 220.0, "y": 120.0 },
+      "nodeAnchor": { "x": 0.0, "y": 1.0 },
+      "nodePivot": { "x": 0.5, "y": 0.5 },
+      "nodeDepth": 4,
+      "psdCenter": { "x": -110.0, "y": 50.0 },
+      "psdSize": { "x": 200.0, "y": 140.0 },
+      "psdAnchor": { "x": 0.5, "y": 0.5 },
+      "psdPivot": { "x": 0.5, "y": 0.5 },
+      "psdDepth": 1
+    },
+    {
+      "name": "type-mismatch-but-geometry-close",
+      "isTypeMatch": false,
+      "inLayout": false,
+      "nodeCenter": { "x": 300.0, "y": -110.0 },
+      "nodeSize": { "x": 80.0, "y": 80.0 },
+      "nodeAnchor": { "x": 0.5, "y": 0.5 },
+      "nodePivot": { "x": 0.5, "y": 0.5 },
+      "nodeDepth": 3,
+      "psdCenter": { "x": 310.0, "y": -95.0 },
+      "psdSize": { "x": 84.0, "y": 76.0 },
+      "psdAnchor": { "x": 0.5, "y": 0.5 },
+      "psdPivot": { "x": 0.5, "y": 0.5 },
+      "psdDepth": 3
+    }
+  ]
+}
