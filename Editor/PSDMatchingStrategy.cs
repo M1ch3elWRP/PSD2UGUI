@@ -20,12 +20,28 @@ namespace PSDImporter
         public static float CalculateMatchScore(
             PicData item,
             Transform node,
-            Vector3 targetWorldPos, // 为了性能，位置由外部算好传入，或者在内部算
+            RectTransform root,
+            int psdWidth,
+            int psdHeight,
             PSDImportConfig config)
         {
+            if (item == null || node == null || root == null || config == null)
+            {
+                return 0f;
+            }
+
+            RectTransform nodeRect = node as RectTransform;
+            if (nodeRect == null)
+            {
+                return 0f;
+            }
+
+            var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(nodeRect, root);
+            var psdGeom = PSDMatchGeometry.BuildPsdGeom(item, psdWidth, psdHeight);
+
             // A. 位置分
             float scorePos = 0f;
-            float dist = Vector3.Distance(node.position, targetWorldPos);
+            float dist = Vector2.Distance(nodeGeom.centerLocal, psdGeom.centerLocal);
 
             // 只有在阈值内才给分
             if (dist < config.maxDistanceError)
@@ -33,8 +49,8 @@ namespace PSDImporter
 
             // B. 尺寸分
             float scoreSize = 0f;
-            float diffW = Mathf.Abs(((RectTransform)node).rect.width - item.width);
-            float diffH = Mathf.Abs(((RectTransform)node).rect.height - item.height);
+            float diffW = Mathf.Abs(nodeGeom.sizeLocal.x - psdGeom.sizeLocal.x);
+            float diffH = Mathf.Abs(nodeGeom.sizeLocal.y - psdGeom.sizeLocal.y);
 
             if ((diffW + diffH) < config.maxSizeDiff)
                 scoreSize = (1f - ((diffW + diffH) / config.maxSizeDiff)) * 100f;
@@ -88,9 +104,11 @@ namespace PSDImporter
             float bestScore = -1f;
 
             // 预计算目标位置
-            float localX = item.x - psdWidth * 0.5f;
-            float localY = item.y - psdHeight * 0.5f;
-            Vector3 targetWorldPos = root.TransformPoint(new Vector3(localX, localY, 0));
+            RectTransform rootRect = root as RectTransform;
+            if (rootRect == null)
+            {
+                return null;
+            }
 
             foreach (var node in allNodes)
             {
@@ -99,7 +117,7 @@ namespace PSDImporter
                 if (config != null && config.skipInactiveMatch && !node.gameObject.activeInHierarchy) continue;
 
                 // 【调用核心算法】
-                float totalScore = CalculateMatchScore(item, node, targetWorldPos, config);
+                float totalScore = CalculateMatchScore(item, node, rootRect, psdWidth, psdHeight, config);
 
                 if (totalScore > bestScore)
                 {

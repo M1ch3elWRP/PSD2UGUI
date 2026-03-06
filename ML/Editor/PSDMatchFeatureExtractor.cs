@@ -1,4 +1,3 @@
-using System;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -14,26 +13,27 @@ namespace PSDImporter
             var features = new float[FeatureCount];
             if (node == null || root == null) return features;
 
-            float localX = item.x - psdWidth * 0.5f;
-            float localY = item.y - psdHeight * 0.5f;
-            Vector3 targetWorldPos = root.TransformPoint(new Vector3(localX, localY, 0));
+            RectTransform rootRect = root as RectTransform;
+            if (rootRect == null) return features;
 
-            float dist = Vector3.Distance(node.position, targetWorldPos);
+            var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(node, rootRect);
+            var psdGeom = PSDMatchGeometry.BuildPsdGeom(item, psdWidth, psdHeight);
+
+            float dist = Vector2.Distance(nodeGeom.centerLocal, psdGeom.centerLocal);
             float distNorm = (maxDistanceError > 0f) ? Mathf.Clamp01(dist / maxDistanceError) : 1f;
 
-            float sizeDiff = Mathf.Abs(node.rect.width - item.width) + Mathf.Abs(node.rect.height - item.height);
+            float sizeDiff = Mathf.Abs(nodeGeom.sizeLocal.x - psdGeom.sizeLocal.x) + Mathf.Abs(nodeGeom.sizeLocal.y - psdGeom.sizeLocal.y);
             float sizeNorm = (maxSizeDiff > 0f) ? Mathf.Clamp01(sizeDiff / maxSizeDiff) : 1f;
 
             float typeMatch = IsTypeMatch(node, item.uiType) ? 1f : 0f;
             float inLayout = node.GetComponentInParent<LayoutGroup>() != null ? 1f : 0f;
 
-            int depthPsd = GetPsdDepth(item.groupName);
-            int depthNode = GetNodeDepth(node, root);
+            int depthPsd = psdGeom.depth;
+            int depthNode = nodeGeom.depth;
             float depthNorm = maxDepthDiff > 0 ? Mathf.Clamp01(Mathf.Abs(depthPsd - depthNode) / (float)maxDepthDiff) : 1f;
             float sameDepth = 1f - depthNorm;
 
-            Vector2 anchorCenter = (node.anchorMin + node.anchorMax) * 0.5f;
-            float anchorDist = Vector2.Distance(anchorCenter, new Vector2(0.5f, 0.5f));
+            float anchorDist = Vector2.Distance(nodeGeom.anchorCenter, psdGeom.anchorCenter);
             float anchorDiff = Mathf.Clamp01(anchorDist / AnchorNorm);
 
             features[0] = distNorm;
@@ -50,26 +50,6 @@ namespace PSDImporter
         {
             if (psdData == null || dataset == null) return new float[FeatureCount];
             return ExtractFeatures(item, node, root, psdData.width, psdData.height, dataset.maxDistanceError, dataset.maxSizeDiff, dataset.maxDepthDiff);
-        }
-
-        private static int GetPsdDepth(string groupName)
-        {
-            if (string.IsNullOrEmpty(groupName)) return 0;
-            string trimmed = groupName.Trim('/');
-            if (string.IsNullOrEmpty(trimmed)) return 0;
-            return trimmed.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries).Length;
-        }
-
-        private static int GetNodeDepth(Transform node, Transform root)
-        {
-            int depth = 0;
-            var current = node;
-            while (current != null && current != root)
-            {
-                depth++;
-                current = current.parent;
-            }
-            return depth;
         }
 
         private static bool IsTypeMatch(Transform node, string psdType)

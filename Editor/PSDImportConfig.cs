@@ -84,6 +84,9 @@ namespace PSDImporter
         [Tooltip("Always print Top5 candidates even when all items are matched by ID.")]
         public bool forceCandidateLog = false;
 
+        [Tooltip("Print node/PSD root-local geometry (center/size) during match scoring for debugging anchor/pivot/scale/layout impact.")]
+        public bool logMatchGeometry = false;
+
         [Header("Auto Learn (ML)")]
         [Tooltip("Optional ML config asset.")]
         public PSDMatchMLConfig mlConfig;
