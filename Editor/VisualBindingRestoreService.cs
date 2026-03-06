@@ -56,6 +56,12 @@ namespace PSDImporter
             try
             {
                 Transform rootTransform = targetRoot.transform;
+                RectTransform rootRectTransform = rootTransform as RectTransform;
+                if (rootRectTransform == null)
+                {
+                    Debug.LogWarning("[Match] targetRoot is not a RectTransform, skip auto match.");
+                    return;
+                }
                 bool logDetail = matchConfig.showDetailedLog;
                 bool forceCandidateLog = matchConfig.forceCandidateLog;
                 bool logCandidatesInLoop = logDetail && !forceCandidateLog;
@@ -215,9 +221,7 @@ namespace PSDImporter
                 for (int i = 0; i < itemCount; i++)
                 {
                     var bind = pendingBinds[i];
-                    float localX = bind.psdItem.x - cachedPsdData.width * 0.5f;
-                    float localY = bind.psdItem.y - cachedPsdData.height * 0.5f;
-                    Vector3 targetWorldPos = rootTransform.TransformPoint(new Vector3(localX, localY, 0));
+                    var psdGeom = PSDMatchGeometry.BuildPsdGeom(bind.psdItem, cachedPsdData.width, cachedPsdData.height);
                     List<MatchCandidate> localCandidates = logCandidatesInLoop ? new List<MatchCandidate>() : null;
                     int skippedType = 0;
 
@@ -231,7 +235,7 @@ namespace PSDImporter
                         }
 
                         ScoreBreakdown breakdown;
-                        float score = GetMatchScore(bind.psdItem, node, targetWorldPos, matchConfig, useMlScore, mlModel, rootTransform, cachedPsdData, out breakdown);
+                        float score = GetMatchScore(bind.psdItem, node, psdGeom, matchConfig, useMlScore, mlModel, rootRectTransform, cachedPsdData, out breakdown);
                         if (score > 1f)
                         {
                             validMatrix[i, j] = true;
@@ -256,16 +260,16 @@ namespace PSDImporter
                     if (logCandidatesInLoop)
                     {
                         StringBuilder sb = new StringBuilder();
-                        sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
+                        sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) centerLocal=({psdGeom.centerLocal.x:F1},{psdGeom.centerLocal.y:F1}) size=({psdGeom.sizeLocal.x:F1},{psdGeom.sizeLocal.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
                         var top = localCandidates.OrderByDescending(c => c.score).Take(5).ToList();
                         for (int k = 0; k < top.Count; k++)
                         {
                             var cand = top[k];
                             var b = cand.breakdown;
-                            float nodeW = cand.node.rect.width;
-                            float nodeH = cand.node.rect.height;
+                            var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(cand.node, rootRectTransform);
                             string mlInfo = b.mlUsed ? $" mlScore={cand.score:F1} mlProb={b.mlProb:F3}" : string.Empty;
-                            sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
+                            string geomInfo = matchConfig.logMatchGeometry ? $" nodeCenterLocal=({nodeGeom.centerLocal.x:F1},{nodeGeom.centerLocal.y:F1}) nodeSizeLocal=({nodeGeom.sizeLocal.x:F1},{nodeGeom.sizeLocal.y:F1}) psdCenterLocal=({psdGeom.centerLocal.x:F1},{psdGeom.centerLocal.y:F1}) psdSizeLocal=({psdGeom.sizeLocal.x:F1},{psdGeom.sizeLocal.y:F1})" : string.Empty;
+                            sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy}{geomInfo} dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
                         }
                         Debug.Log(sb.ToString());
                     }
@@ -338,12 +342,12 @@ namespace PSDImporter
                     if (logDetail)
                     {
                         ScoreBreakdown breakdown;
-                        Vector3 targetWorldPos = rootTransform.TransformPoint(new Vector3(bind.psdItem.x - cachedPsdData.width * 0.5f, bind.psdItem.y - cachedPsdData.height * 0.5f, 0));
-                        GetMatchScore(bind.psdItem, node, targetWorldPos, matchConfig, useMlScore, mlModel, rootTransform, cachedPsdData, out breakdown);
-                        float nodeW = node.rect.width;
-                        float nodeH = node.rect.height;
+                        var psdGeom = PSDMatchGeometry.BuildPsdGeom(bind.psdItem, cachedPsdData.width, cachedPsdData.height);
+                        GetMatchScore(bind.psdItem, node, psdGeom, matchConfig, useMlScore, mlModel, rootRectTransform, cachedPsdData, out breakdown);
+                        var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(node, rootRectTransform);
                         string mlInfo = breakdown.mlUsed ? $" mlScore={bind.score:F1} mlProb={breakdown.mlProb:F3}" : string.Empty;
-                        Debug.Log($"[Match] Result {bind.psdItem.pngName} -> {GetTransformPath(node)} score={bind.score:F1} dist={breakdown.distance:F1} diff=({breakdown.diffW:F1},{breakdown.diffH:F1}) nodeSize=({nodeW:F1},{nodeH:F1}) w=({breakdown.weightedPos:F1},{breakdown.weightedSize:F1},{breakdown.weightedType:F1}){mlInfo}");
+                        string geomInfo = matchConfig.logMatchGeometry ? $" nodeCenterLocal=({nodeGeom.centerLocal.x:F1},{nodeGeom.centerLocal.y:F1}) nodeSizeLocal=({nodeGeom.sizeLocal.x:F1},{nodeGeom.sizeLocal.y:F1}) psdCenterLocal=({psdGeom.centerLocal.x:F1},{psdGeom.centerLocal.y:F1}) psdSizeLocal=({psdGeom.sizeLocal.x:F1},{psdGeom.sizeLocal.y:F1})" : string.Empty;
+                        Debug.Log($"[Match] Result {bind.psdItem.pngName} -> {GetTransformPath(node)} score={bind.score:F1} dist={breakdown.distance:F1} diff=({breakdown.diffW:F1},{breakdown.diffH:F1}){geomInfo} w=({breakdown.weightedPos:F1},{breakdown.weightedSize:F1},{breakdown.weightedType:F1}){mlInfo}");
                     }
                 }
 
@@ -428,9 +432,12 @@ namespace PSDImporter
                 return;
             }
 
-            float localX = bind.psdItem.x - cachedPsdData.width * 0.5f;
-            float localY = bind.psdItem.y - cachedPsdData.height * 0.5f;
-            Vector3 targetWorldPos = rootTransform.TransformPoint(new Vector3(localX, localY, 0));
+            RectTransform rootRect = rootTransform as RectTransform;
+            if (rootRect == null)
+            {
+                return;
+            }
+            var psdGeom = PSDMatchGeometry.BuildPsdGeom(bind.psdItem, cachedPsdData.width, cachedPsdData.height);
 
             List<MatchCandidate> localCandidates = new List<MatchCandidate>();
             int skippedType = 0;
@@ -444,7 +451,7 @@ namespace PSDImporter
                 }
 
                 ScoreBreakdown breakdown;
-                float score = GetMatchScore(bind.psdItem, node, targetWorldPos, config, useMlScore, mlModel, rootTransform, cachedPsdData, out breakdown);
+                float score = GetMatchScore(bind.psdItem, node, psdGeom, config, useMlScore, mlModel, rootRect, cachedPsdData, out breakdown);
                 if (score > 1f)
                 {
                     localCandidates.Add(new MatchCandidate
@@ -457,37 +464,38 @@ namespace PSDImporter
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
+            sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) centerLocal=({psdGeom.centerLocal.x:F1},{psdGeom.centerLocal.y:F1}) size=({psdGeom.sizeLocal.x:F1},{psdGeom.sizeLocal.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
             var top = localCandidates.OrderByDescending(c => c.score).Take(5).ToList();
             for (int k = 0; k < top.Count; k++)
             {
                 var cand = top[k];
                 var b = cand.breakdown;
-                float nodeW = cand.node.rect.width;
-                float nodeH = cand.node.rect.height;
+                var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(cand.node, rootRect);
                 string mlInfo = b.mlUsed ? $" mlScore={cand.score:F1} mlProb={b.mlProb:F3}" : string.Empty;
-                sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
+                string geomInfo = config.logMatchGeometry ? $" nodeCenterLocal=({nodeGeom.centerLocal.x:F1},{nodeGeom.centerLocal.y:F1}) nodeSizeLocal=({nodeGeom.sizeLocal.x:F1},{nodeGeom.sizeLocal.y:F1}) psdCenterLocal=({psdGeom.centerLocal.x:F1},{psdGeom.centerLocal.y:F1}) psdSizeLocal=({psdGeom.sizeLocal.x:F1},{psdGeom.sizeLocal.y:F1})" : string.Empty;
+                sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy}{geomInfo} dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
             }
             Debug.Log(sb.ToString());
         }
 
-        private static float CalculateMatchScoreDetailed(PicData item, RectTransform node, Vector3 targetWorldPos, PSDImportConfig config, out ScoreBreakdown breakdown)
+        private static float CalculateMatchScoreDetailed(PicData item, RectTransform node, PSDMatchGeometry.PsdGeom psdGeom, RectTransform root, PSDImportConfig config, out ScoreBreakdown breakdown)
         {
             breakdown = new ScoreBreakdown();
-            if (config == null || node == null)
+            if (config == null || node == null || root == null)
             {
                 return 0f;
             }
 
-            float dist = Vector3.Distance(node.position, targetWorldPos);
+            var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(node, root);
+            float dist = Vector2.Distance(nodeGeom.centerLocal, psdGeom.centerLocal);
             float scorePos = 0f;
             if (dist < config.maxDistanceError)
             {
                 scorePos = (1f - (dist / config.maxDistanceError)) * 100f;
             }
 
-            float diffW = Mathf.Abs(node.rect.width - item.width);
-            float diffH = Mathf.Abs(node.rect.height - item.height);
+            float diffW = Mathf.Abs(nodeGeom.sizeLocal.x - psdGeom.sizeLocal.x);
+            float diffH = Mathf.Abs(nodeGeom.sizeLocal.y - psdGeom.sizeLocal.y);
             float scoreSize = 0f;
             if ((diffW + diffH) < config.maxSizeDiff)
             {
@@ -519,17 +527,17 @@ namespace PSDImporter
         private static float GetMatchScore(
             PicData item,
             RectTransform node,
-            Vector3 targetWorldPos,
+            PSDMatchGeometry.PsdGeom psdGeom,
             PSDImportConfig config,
             bool useMlScore,
             PSDMatchModel mlModel,
-            Transform rootTransform,
+            RectTransform rootTransform,
             PSDData cachedPsdData,
             out ScoreBreakdown breakdown)
         {
             if (!useMlScore || mlModel == null)
             {
-                return CalculateMatchScoreDetailed(item, node, targetWorldPos, config, out breakdown);
+                return CalculateMatchScoreDetailed(item, node, psdGeom, rootTransform, config, out breakdown);
             }
 
             float maxDist = mlModel.maxDistanceError > 0f ? mlModel.maxDistanceError : config.maxDistanceError;
@@ -540,7 +548,7 @@ namespace PSDImporter
             float prob = PSDMatchML.Predict(mlModel, x);
             float score = prob * 100f;
 
-            CalculateMatchScoreDetailed(item, node, targetWorldPos, config, out breakdown);
+            CalculateMatchScoreDetailed(item, node, psdGeom, rootTransform, config, out breakdown);
             breakdown.mlProb = prob;
             breakdown.mlUsed = true;
             return score;
