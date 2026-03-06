@@ -4,7 +4,8 @@
     "maxSizeDiff": 100.0,
     "maxDepthDiff": 10,
     "screenIds": [
-        "Assets/Import3/5主页.ps.data"
+        "Assets/Import3/5主页.ps.data",
+        "Assets/Images/Test.ps.data"
     ],
     "samples": [
         {
@@ -1210,6 +1211,1042 @@
             "item": "排行榜",
             "node": "Canvas (7)1111/T/txt",
             "screenId": "Assets/Import3/5主页.ps.data"
+        },
+        {
+            "x": [
+                0.25279685854911806,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 1,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.8460533022880554,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (1)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (2)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (3)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.25279685854911806,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 1,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.8460533022880554,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (1)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (2)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (3)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 1,
+            "item": "头像5@Item",
+            "node": "Canvas (6)/Layout/Item",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.949999988079071,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像5@Item",
+            "node": "Canvas (6)/Layout/Item (1)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像5@Item",
+            "node": "Canvas (6)/Layout/Item (2)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像5@Item",
+            "node": "Canvas (6)/Layout/Item (3)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.1644878387451172,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 1,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (1)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.9550687670707703,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (2)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (3)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.1644878387451172,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 1,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (1)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.9550687670707703,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (2)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (3)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 1,
+            "item": "头像4@Item",
+            "node": "Canvas (6)/Layout/Item (1)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.949999988079071,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像4@Item",
+            "node": "Canvas (6)/Layout/Item",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.949999988079071,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像4@Item",
+            "node": "Canvas (6)/Layout/Item (2)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像4@Item",
+            "node": "Canvas (6)/Layout/Item (3)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.12002603709697724,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 1,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (2)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (1)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (3)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.12002603709697724,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 1,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (2)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (1)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (3)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 1,
+            "item": "头像3@Item",
+            "node": "Canvas (6)/Layout/Item (2)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.949999988079071,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像3@Item",
+            "node": "Canvas (6)/Layout/Item (1)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.949999988079071,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像3@Item",
+            "node": "Canvas (6)/Layout/Item (3)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像3@Item",
+            "node": "Canvas (6)/Layout/Item",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.16110943257808686,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 1,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (3)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.9600293040275574,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (2)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (1)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.16110943257808686,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 1,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (3)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.9600293040275574,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (2)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (1)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 1,
+            "item": "头像2@Item",
+            "node": "Canvas (6)/Layout/Item (3)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.949999988079071,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像2@Item",
+            "node": "Canvas (6)/Layout/Item (2)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.949999988079071,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像2@Item",
+            "node": "Canvas (6)/Layout/Item (4)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像2@Item",
+            "node": "Canvas (6)/Layout/Item",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.24840742349624635,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 1,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (4)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.8460533022880554,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (3)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "道具圆-普通 拷贝@Img",
+            "node": "Canvas (6)/Layout/Item (1)/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.24840742349624635,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 1,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (4)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.8460533022880554,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (3)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "仙友名字",
+            "node": "Canvas (6)/Layout/Item (1)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.004999999888241291,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 1,
+            "item": "头像1@Item",
+            "node": "Canvas (6)/Layout/Item (4)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.9449999928474426,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像1@Item",
+            "node": "Canvas (6)/Layout/Item (3)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像1@Item",
+            "node": "Canvas (6)/Layout/Item",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.8999999761581421,
+                1.0
+            ],
+            "y": 0,
+            "item": "头像1@Item",
+            "node": "Canvas (6)/Layout/Item (1)",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                1.0,
+                0.0
+            ],
+            "y": 1,
+            "item": "列表@H",
+            "node": "Canvas (6)/Layout",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.007071067579090595,
+                0.0,
+                1.0,
+                0.0,
+                0.8999999761581421,
+                0.0
+            ],
+            "y": 1,
+            "item": "形状 686 拷贝 2@Img",
+            "node": "Canvas (6)/BtnBack/GameObject",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                1.0,
+                1.0,
+                0.0,
+                1.0,
+                0.0
+            ],
+            "y": 0,
+            "item": "形状 686 拷贝 2@Img",
+            "node": "Canvas (6)/Bg",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                1.0,
+                1.0,
+                0.0,
+                0.8999999761581421,
+                0.0
+            ],
+            "y": 0,
+            "item": "形状 686 拷贝 2@Img",
+            "node": "Canvas (6)/T/Title",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "形状 686 拷贝 2@Img",
+            "node": "Canvas (6)/Layout/Item/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                1.0,
+                0.0
+            ],
+            "y": 1,
+            "item": "返回按钮@Btn",
+            "node": "Canvas (6)/BtnBack",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.8999999761581421,
+                0.0
+            ],
+            "y": 1,
+            "item": "形状 921@Img",
+            "node": "Canvas (6)/T/Title",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                1.0,
+                1.0,
+                0.0,
+                1.0,
+                0.0
+            ],
+            "y": 0,
+            "item": "形状 921@Img",
+            "node": "Canvas (6)/Bg",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                1.0,
+                1.0,
+                0.0,
+                0.8999999761581421,
+                0.0
+            ],
+            "y": 0,
+            "item": "形状 921@Img",
+            "node": "Canvas (6)/BtnBack/GameObject",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "形状 921@Img",
+            "node": "Canvas (6)/Layout/Item/Icon",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.8999999761581421,
+                0.0
+            ],
+            "y": 1,
+            "item": "排行榜",
+            "node": "Canvas (6)/T/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.23999999463558198,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "排行榜",
+            "node": "Canvas (6)/Layout/Item/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.23999999463558198,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "排行榜",
+            "node": "Canvas (6)/Layout/Item (1)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
+        },
+        {
+            "x": [
+                1.0,
+                0.23999999463558198,
+                1.0,
+                1.0,
+                0.800000011920929,
+                0.0
+            ],
+            "y": 0,
+            "item": "排行榜",
+            "node": "Canvas (6)/Layout/Item (2)/txt",
+            "screenId": "Assets/Images/Test.ps.data"
         }
     ]
 }

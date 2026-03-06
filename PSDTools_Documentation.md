@@ -12,16 +12,15 @@
    - `.ps.data`（包含图层信息的 JSON 数据）
 
 ### 1.2 Unity 端新建模式（Create）
-1) 打开菜单：`PSDTools/Visual Binding Tool`。  
-2) 选择 **Mode = Create**，拖入 `.ps.data`。  
+1) 打开菜单：`PSDTools/Create UI From PSD`。  
+2) 拖入 `.ps.data`，按需指定 `PSDImportConfig`。  
 3) 点击 **Create UI**，工具会直接生成以 **Canvas 根节点**为入口的结构。  
 
 ### 1.3 Unity 端还原模式（Restore）
-1) 打开菜单：`PSDTools/Visual Binding Tool`。  
-2) 选择 **Mode = Restore**，拖入 `.ps.data`。  
-3) 指定 Target Root（白膜 Prefab 根节点）。  
-4) 点击 **智能匹配** 或手动绑定。  
-5) 点击 **Apply All (Save)** 写回所有节点属性。  
+1) 打开菜单：`PSDTools/Restore UI From PSD`。  
+2) 拖入 `.ps.data`，指定 Target Root（白膜 Prefab 根节点）。  
+3) 可视化模式下点击 **智能匹配** 或手动绑定。  
+4) 点击 **Apply All (Save)** 写回所有节点属性。  
 
 ## 2. 命名后缀与导出规则
 
@@ -112,7 +111,10 @@ A：脚本会对组或智能对象执行合并/栅格化来避免黑图；如异
 - `ExportToPNG.jsx`：PS 端导出 PNG + `.ps.data`。  
 - `PSDLoader`：读取 `.ps.data` 并解析为 `PSDData`。  
 - `PSDCreateor`：新建/还原入口，负责节点创建与同步。  
-- `VisualBindingWindow`：可视化绑定与匹配 UI。  
+- `PSDImportWorkflow`：Create/Restore 执行编排与参数校验。  
+- `PsdCreateWindow`：Create 模式窗口（仅展示与触发）。  
+- `VisualBindingRestoreService`：还原模式的匹配与应用服务。  
+- `VisualBindingWindow`：Restore 模式窗口（可视化还原与匹配 UI）。  
 - `PSDMatchingStrategy`：匹配评分计算与最佳候选查找。  
 - `PSDLayoutTool`：LayoutGroup 参数计算与应用。  
 - `PSDGroupTool`：空组对齐工具。  

@@ -5,8 +5,8 @@ This Unity project includes the PSD2Unity editor tooling in `Assets/PSDTools/`. 
 
 ## Build, Test, and Development Commands
 There are no build or test scripts in `package.json` (it is a Unity package manifest). Use the Unity Editor:
-- Open the tool window: `PSDTools/Open Importer Window`.
-- Use the visual binding UI: `PSDTools/Visual Binding Tool`.
+- Open create mode: `PSDTools/Create UI From PSD`.
+- Open restore mode: `PSDTools/Restore UI From PSD`.
 If you must automate, run Unity in batch mode from the project root with `-projectPath`, but no specific CLI entrypoints are defined here.
 
 ## Coding Style & Naming Conventions

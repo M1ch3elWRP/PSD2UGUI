@@ -2,10 +2,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI;
 using UnityObject = UnityEngine.Object;
 using System;
 
@@ -36,8 +34,6 @@ namespace PSDImporter
         private UnityObject psdDataFile;
         private GameObject targetRoot;
         private PSDImportConfig config;
-        private enum ImportMode { Create, Restore }
-        private ImportMode importMode = ImportMode.Restore;
 
         // --- 数据 ---
         private PSDData cachedPsdData;
@@ -85,10 +81,10 @@ namespace PSDImporter
         private const float TOOLBAR_H = 20f;    // 顶部高度
         private const float BOTTOM_H = 30f;     // 底部高度
 
-        [MenuItem("PSDTools/Visual Binding Tool (可视化绑定)", priority = 1)]
+        [MenuItem("PSDTools/Restore UI From PSD", priority = 1)]
         public static void ShowWindow()
         {
-            var win = GetWindow<VisualBindingWindow>("UI Visual Binder");
+            var win = GetWindow<VisualBindingWindow>("PSD Restore");
             win.minSize = new Vector2(800, 600);
             win.Show();
         }
@@ -412,8 +408,7 @@ namespace PSDImporter
 
             if (prefabNodes.Count == 0)
             {
-                string msg = importMode == ImportMode.Create ? "Create mode does not need Target Root" : "Please assign Target Root";
-                GUILayout.Label(msg, EditorStyles.centeredGreyMiniLabel);
+                GUILayout.Label("Please assign Target Root", EditorStyles.centeredGreyMiniLabel);
             }
 
             foreach (var node in prefabNodes)
@@ -476,25 +471,14 @@ namespace PSDImporter
         // =================================================================================
         // 顶部 & 底部栏 (使用 GUILayout)
         // =================================================================================
-                private void DrawToolbar()
+        private void DrawToolbar()
         {
             EditorGUILayout.BeginHorizontal(EditorStyles.toolbar, GUILayout.Height(TOOLBAR_H)); // Fixed height
-            GUILayout.Label("Mode", GUILayout.Width(30));
-            var newMode = (ImportMode)EditorGUILayout.EnumPopup(importMode, GUILayout.Width(90));
-            if (newMode != importMode)
-            {
-                importMode = newMode;
-                OnModeChanged();
-            }
-            GUILayout.Space(6);
             GUILayout.Label("PSD Data", GUILayout.Width(50));
             psdDataFile = EditorGUILayout.ObjectField(psdDataFile, typeof(UnityObject), false, GUILayout.Width(150));
-            if (importMode == ImportMode.Restore)
-            {
-                GUILayout.Space(10);
-                GUILayout.Label("Target Root", GUILayout.Width(70));
-                targetRoot = (GameObject)EditorGUILayout.ObjectField(targetRoot, typeof(GameObject), true, GUILayout.Width(150));
-            }
+            GUILayout.Space(10);
+            GUILayout.Label("Target Root", GUILayout.Width(70));
+            targetRoot = (GameObject)EditorGUILayout.ObjectField(targetRoot, typeof(GameObject), true, GUILayout.Width(150));
             GUILayout.Space(10);
             GUILayout.Label("Config:", GUILayout.Width(40));
             config = (PSDImportConfig)EditorGUILayout.ObjectField(config, typeof(PSDImportConfig), false, GUILayout.Width(120));
@@ -502,22 +486,14 @@ namespace PSDImporter
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
         }
-                private void DrawBottomBar()
+
+        private void DrawBottomBar()
         {
             GUILayout.BeginHorizontal("box", GUILayout.Height(BOTTOM_H));
             GUILayout.FlexibleSpace();
-            if (importMode == ImportMode.Create)
-            {
-                GUI.backgroundColor = new Color(0.35f, 0.7f, 1f);
-                GUI.enabled = IsValidPsdDataFile();
-                if (GUILayout.Button("Create UI", GUILayout.Height(24), GUILayout.Width(160))) CreateNewUI();
-            }
-            else
-            {
-                GUI.backgroundColor = new Color(0.4f, 0.9f, 0.4f);
-                GUI.enabled = IsValidPsdDataFile() && targetRoot != null;
-                if (GUILayout.Button("Apply All (Save)", GUILayout.Height(24), GUILayout.Width(200))) ApplyBindings();
-            }
+            GUI.backgroundColor = new Color(0.4f, 0.9f, 0.4f);
+            GUI.enabled = IsValidPsdDataFile() && targetRoot != null;
+            if (GUILayout.Button("Apply All (Save)", GUILayout.Height(24), GUILayout.Width(200))) ApplyBindings();
             GUI.enabled = true;
             GUI.backgroundColor = Color.white;
             GUILayout.EndHorizontal();
@@ -532,19 +508,12 @@ namespace PSDImporter
             cachedPsdData = PSDLoader.ReadJson(path);
             if (cachedPsdData == null) return;
 
-            if (importMode == ImportMode.Restore)
-            {
-                string dir = Path.GetDirectoryName(path);
-                string name = Path.GetFileNameWithoutExtension(path) + "_Binding.asset";
-                string assetPath = Path.Combine(dir, name);
-                bindingAsset = AssetDatabase.LoadAssetAtPath<PSDBindingData>(assetPath);
-                if (bindingAsset == null) { bindingAsset = CreateInstance<PSDBindingData>(); AssetDatabase.CreateAsset(bindingAsset, assetPath); }
-                bindingAsset.BuildCache();
-            }
-            else
-            {
-                bindingAsset = null;
-            }
+            string dir = Path.GetDirectoryName(path);
+            string name = Path.GetFileNameWithoutExtension(path) + "_Binding.asset";
+            string assetPath = Path.Combine(dir, name);
+            bindingAsset = AssetDatabase.LoadAssetAtPath<PSDBindingData>(assetPath);
+            if (bindingAsset == null) { bindingAsset = CreateInstance<PSDBindingData>(); AssetDatabase.CreateAsset(bindingAsset, assetPath); }
+            bindingAsset.BuildCache();
 
             bindings.Clear();
             textureCache.Clear();
@@ -556,16 +525,8 @@ namespace PSDImporter
                     bindings.Add(new BindingPairViewModel() { psdItem = item, unityNode = null, score = 0, isConfirmed = false, statusInfo = "等待匹配", isIdMatched = false, depth = 0 });
                 }
             }
-            if (importMode == ImportMode.Restore)
-            {
-                RefreshPrefabHierarchy();
-                if (targetRoot != null) RunAutoMatch();
-            }
-            else
-            {
-                prefabNodes.Clear();
-                selectedPrefabNode = null;
-            }
+            RefreshPrefabHierarchy();
+            if (targetRoot != null) RunAutoMatch();
             Repaint();
         }
         private void RefreshPrefabHierarchy()
@@ -643,313 +604,23 @@ namespace PSDImporter
         }
 
         // =================================================================================
-        // 匹配与应用
+        // 匹配与应用（委托 Service）
         // =================================================================================
-        private struct ScoreBreakdown
-        {
-            public float distance;
-            public float diffW;
-            public float diffH;
-            public float scorePos;
-            public float scoreSize;
-            public float scoreType;
-            public float weightedPos;
-            public float weightedSize;
-            public float weightedType;
-            public float total;
-            public bool passThresholds;
-            public float mlProb;
-            public bool mlUsed;
-        }
-
-        private class MatchCandidate
-        {
-            public BindingPairViewModel bind;
-            public Transform node;
-            public float score;
-            public string reason;
-            public bool isPerfect;
-            public ScoreBreakdown breakdown;
-        }
         private void RunAutoMatch()
         {
-            if (targetRoot == null || bindings.Count == 0) return;
-            var matchConfig = config ?? ScriptableObject.CreateInstance<PSDImportConfig>();
-            bool logDetail = matchConfig != null && matchConfig.showDetailedLog;
-            bool forceCandidateLog = matchConfig != null && matchConfig.forceCandidateLog;
-            bool logCandidatesInLoop = logDetail && !forceCandidateLog;
-            var mlConfig = matchConfig != null ? matchConfig.mlConfig : null;
-            bool useMlScore = mlConfig != null && mlConfig.useMlScore;
-            PSDMatchModel mlModel = null;
-            if (useMlScore)
-            {
-                mlModel = PSDMatchAutoLearn.TryLoadModel(mlConfig);
-                if (mlModel == null)
-                {
-                    useMlScore = false;
-                    if (logDetail) Debug.LogWarning("[Match] ML model not found. Fallback to manual weights.");
-                }
-            }
-            float perfectThreshold = useMlScore ? 80f : 150f;
-            HashSet<Transform> occupiedNodes = new HashSet<Transform>();
-            HashSet<BindingPairViewModel> matchedBindings = new HashSet<BindingPairViewModel>();
-            if (logDetail)
-            {
-                Debug.Log($"[Match] Config maxDist={matchConfig.maxDistanceError:F1}, maxSizeDiff={matchConfig.maxSizeDiff:F1}, weightPos={matchConfig.weightPosition:F2}, weightSize={matchConfig.weightSize:F2}, weightType={matchConfig.weightType:F2}, skipInactive={matchConfig.skipInactiveMatch}, forceCandidateLog={forceCandidateLog}, useMlScore={useMlScore}");
-            }
-            foreach (var bind in bindings)
-            {
-                if (bind.isConfirmed && bind.unityNode != null) { occupiedNodes.Add(bind.unityNode); matchedBindings.Add(bind); }
-                else { bind.unityNode = null; bind.score = 0; bind.statusInfo = "Waiting for match"; bind.isIdMatched = false; }
-            }
-
-            var pendingBinds = new List<BindingPairViewModel>();
-            foreach (var bind in bindings)
-            {
-                if (matchedBindings.Contains(bind)) continue;
-                if (bindingAsset != null)
-                {
-                    GameObject savedGo = bindingAsset.GetBindTarget(bind.psdItem.id);
-                    if (savedGo != null && savedGo.transform.IsChildOf(targetRoot.transform) && !occupiedNodes.Contains(savedGo.transform))
-                    {
-                        bind.unityNode = savedGo.transform;
-                        bind.score = 9999f;
-                        bind.statusInfo = "ID history binding";
-                        bind.isIdMatched = true;
-                        bind.isConfirmed = true;
-                        matchedBindings.Add(bind);
-                        occupiedNodes.Add(savedGo.transform);
-                        if (logDetail)
-                        {
-                            Debug.Log($"[Match] Saved binding for {bind.psdItem.pngName} -> {GetTransformPath(savedGo.transform)} score=9999 (ID)");
-                        }
-                        continue;
-                    }
-                }
-                pendingBinds.Add(bind);
-            }
-
-            var allNodes = targetRoot.GetComponentsInChildren<RectTransform>(true);
-            var nodeList = new List<RectTransform>();
-            var nodeListForLog = forceCandidateLog ? new List<RectTransform>() : nodeList;
-            int skippedRoot = 0;
-            int skippedOccupied = 0;
-            int skippedInactive = 0;
-            int skippedRootLog = 0;
-            int skippedInactiveLog = 0;
-            int skippedOccupiedLog = 0;
-            foreach (var node in allNodes)
-            {
-                if (node == targetRoot.transform) { skippedRoot++; skippedRootLog++; continue; }
-                if (matchConfig.skipInactiveMatch && !node.gameObject.activeInHierarchy) { skippedInactive++; skippedInactiveLog++; continue; }
-
-                bool isOccupied = occupiedNodes.Contains(node.transform);
-                if (isOccupied) skippedOccupied++; else nodeList.Add(node);
-                if (forceCandidateLog)
-                {
-                    if (isOccupied) skippedOccupiedLog++;
-                    nodeListForLog.Add(node);
-                }
-            }
-
-            if (logDetail)
-            {
-                Debug.Log($"[Match] Candidate nodes={nodeList.Count}, skipped(root:{skippedRoot}, occupied:{skippedOccupied}, inactive:{skippedInactive})");
-                if (forceCandidateLog)
-                {
-                    Debug.Log($"[Match] Candidate nodes(for log)={nodeListForLog.Count}, skipped(root:{skippedRootLog}, occupied:{skippedOccupiedLog}, inactive:{skippedInactiveLog})");
-                }
-            }
-
-            if (logDetail && forceCandidateLog)
-            {
-                foreach (var bind in bindings)
-                {
-                    LogTopCandidatesForBind(bind, nodeListForLog, matchConfig, useMlScore, mlModel, skippedRootLog, skippedInactiveLog, skippedOccupiedLog);
-                }
-            }
-
-            int itemCount = pendingBinds.Count;
-            int nodeCount = nodeList.Count;
-            if (itemCount == 0 || nodeCount == 0)
-            {
-                foreach (var bind in pendingBinds) bind.statusInfo = "No suitable node found";
-                UpdatePrefabStatus();
-                return;
-            }
-
-            float[,] scoreMatrix = new float[itemCount, nodeCount];
-            bool[,] validMatrix = new bool[itemCount, nodeCount];
-            float maxScore = 0f;
-
-            for (int i = 0; i < itemCount; i++)
-            {
-                var bind = pendingBinds[i];
-                float localX = bind.psdItem.x - cachedPsdData.width * 0.5f;
-                float localY = bind.psdItem.y - cachedPsdData.height * 0.5f;
-                Vector3 targetWorldPos = targetRoot.transform.TransformPoint(new Vector3(localX, localY, 0));
-                List<MatchCandidate> localCandidates = logCandidatesInLoop ? new List<MatchCandidate>() : null;
-                int skippedType = 0;
-
-                for (int j = 0; j < nodeCount; j++)
-                {
-                    var node = nodeList[j];
-                    if (!IsTypeMatch(node, bind.psdItem.uiType)) { skippedType++; continue; }
-
-                    ScoreBreakdown breakdown;
-                    float score = GetMatchScore(bind.psdItem, node, targetWorldPos, matchConfig, useMlScore, mlModel, out breakdown);
-                    if (score > 1f)
-                    {
-                        validMatrix[i, j] = true;
-                        scoreMatrix[i, j] = score;
-                        if (score > maxScore) maxScore = score;
-                        if (logCandidatesInLoop)
-                        {
-                            var candidate = new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > perfectThreshold, breakdown = breakdown };
-                            localCandidates.Add(candidate);
-                        }
-                    }
-                }
-
-                if (logCandidatesInLoop)
-                {
-                    var sb = new StringBuilder();
-                    sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
-                    var top = localCandidates.OrderByDescending(c => c.score).Take(5).ToList();
-                    for (int k = 0; k < top.Count; k++)
-                    {
-                        var cand = top[k];
-                        var b = cand.breakdown;
-                        var rt = cand.node as RectTransform;
-                        float nodeW = rt != null ? rt.rect.width : 0f;
-                        float nodeH = rt != null ? rt.rect.height : 0f;
-                        string mlInfo = b.mlUsed ? $" mlScore={cand.score:F1} mlProb={b.mlProb:F3}" : string.Empty;
-                        sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
-                    }
-                    Debug.Log(sb.ToString());
-                }
-            }
-
-            if (maxScore <= 0f)
-            {
-                foreach (var bind in pendingBinds) bind.statusInfo = "No suitable node found";
-                UpdatePrefabStatus();
-                return;
-            }
-
-            int size = Mathf.Max(itemCount, nodeCount);
-            float invalidCost = maxScore + 1000f;
-            float[,] cost = new float[size, size];
-            for (int i = 0; i < size; i++)
-            {
-                for (int j = 0; j < size; j++)
-                {
-                    cost[i, j] = invalidCost;
-                }
-            }
-            for (int i = 0; i < itemCount; i++)
-            {
-                for (int j = 0; j < nodeCount; j++)
-                {
-                    if (validMatrix[i, j])
-                    {
-                        cost[i, j] = maxScore - scoreMatrix[i, j];
-                    }
-                }
-            }
-
-            int[] assignment = PSDHungarianSolver.Solve(cost);
-            for (int i = 0; i < itemCount; i++)
-            {
-                int j = assignment[i];
-                if (j < 0 || j >= nodeCount) continue;
-                if (!validMatrix[i, j]) continue;
-                var bind = pendingBinds[i];
-                var node = nodeList[j];
-                if (occupiedNodes.Contains(node.transform)) continue;
-                bind.unityNode = node;
-                bind.score = scoreMatrix[i, j];
-                bind.statusInfo = $"Score: {bind.score:F0}";
-                bind.isIdMatched = false;
-                if (bind.score > perfectThreshold) bind.isConfirmed = true;
-                matchedBindings.Add(bind);
-                occupiedNodes.Add(node.transform);
-                if (logDetail)
-                {
-                    ScoreBreakdown breakdown;
-                    GetMatchScore(bind.psdItem, node, targetRoot.transform.TransformPoint(new Vector3(bind.psdItem.x - cachedPsdData.width * 0.5f, bind.psdItem.y - cachedPsdData.height * 0.5f, 0)), matchConfig, useMlScore, mlModel, out breakdown);
-                    var rt = node as RectTransform;
-                    float nodeW = rt != null ? rt.rect.width : 0f;
-                    float nodeH = rt != null ? rt.rect.height : 0f;
-                    string mlInfo = breakdown.mlUsed ? $" mlScore={bind.score:F1} mlProb={breakdown.mlProb:F3}" : string.Empty;
-                    Debug.Log($"[Match] Result {bind.psdItem.pngName} -> {GetTransformPath(node)} score={bind.score:F1} dist={breakdown.distance:F1} diff=({breakdown.diffW:F1},{breakdown.diffH:F1}) nodeSize=({nodeW:F1},{nodeH:F1}) w=({breakdown.weightedPos:F1},{breakdown.weightedSize:F1},{breakdown.weightedType:F1}){mlInfo}");
-                }
-            }
-
-            foreach (var bind in pendingBinds)
-            {
-                if (!matchedBindings.Contains(bind)) bind.statusInfo = "No suitable node found";
-            }
+            VisualBindingRestoreService.RunAutoMatch(bindings, targetRoot, cachedPsdData, bindingAsset, config);
             UpdatePrefabStatus();
-        }
-
-        private void LogTopCandidatesForBind(BindingPairViewModel bind, IList<RectTransform> nodes, PSDImportConfig config, bool useMlScore, PSDMatchModel mlModel, int skippedRoot, int skippedInactive, int skippedOccupied)
-        {
-            if (bind == null || nodes == null || config == null) return;
-
-            float localX = bind.psdItem.x - cachedPsdData.width * 0.5f;
-            float localY = bind.psdItem.y - cachedPsdData.height * 0.5f;
-            Vector3 targetWorldPos = targetRoot.transform.TransformPoint(new Vector3(localX, localY, 0));
-
-            List<MatchCandidate> localCandidates = new List<MatchCandidate>();
-            int skippedType = 0;
-            for (int j = 0; j < nodes.Count; j++)
-            {
-                var node = nodes[j];
-                if (!IsTypeMatch(node, bind.psdItem.uiType)) { skippedType++; continue; }
-
-                ScoreBreakdown breakdown;
-                float score = GetMatchScore(bind.psdItem, node, targetWorldPos, config, useMlScore, mlModel, out breakdown);
-                if (score > 1f)
-                {
-                    localCandidates.Add(new MatchCandidate { bind = bind, node = node, score = score, isPerfect = score > 150f, breakdown = breakdown });
-                }
-            }
-
-            var sb = new StringBuilder();
-            sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
-            var top = localCandidates.OrderByDescending(c => c.score).Take(5).ToList();
-            for (int k = 0; k < top.Count; k++)
-            {
-                var cand = top[k];
-                var b = cand.breakdown;
-                var rt = cand.node as RectTransform;
-                float nodeW = rt != null ? rt.rect.width : 0f;
-                float nodeH = rt != null ? rt.rect.height : 0f;
-                string mlInfo = b.mlUsed ? $" mlScore={cand.score:F1} mlProb={b.mlProb:F3}" : string.Empty;
-                sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy} nodeSize=({nodeW:F1},{nodeH:F1}) dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
-            }
-            Debug.Log(sb.ToString());
         }
 
         private void ApplyBindings()
         {
-            if (importMode != ImportMode.Restore) return;
-            if (targetRoot == null) return;
-            Undo.RegisterFullObjectHierarchyUndo(targetRoot, "Apply Visual Bindings");
-            int count = 0;
-            foreach (var bind in bindings)
-            {
-                if (bind.unityNode == null) continue;
-                PSDCreateor.RefreshNode(bind.unityNode.gameObject, bind.psdItem, cachedPsdData, true, config);
-                if (bind.isConfirmed) bindingAsset.SaveBinding(bind.psdItem.id, bind.psdItem.pngName, bind.unityNode.gameObject);
-                count++;
-            }
-            EditorUtility.SetDirty(bindingAsset); AssetDatabase.SaveAssets(); ShowNotification(new GUIContent($"应用成功: {count} 个节点")); UpdatePrefabStatus();
+            if (targetRoot == null || cachedPsdData == null) return;
 
-            // =========================================================
-            // 【新增】第2步：自动清洗组节点位置
-            // =========================================================
+            string psdPath = psdDataFile != null ? AssetDatabase.GetAssetPath(psdDataFile) : null;
+            int count = VisualBindingRestoreService.ApplyBindings(bindings, targetRoot, cachedPsdData, bindingAsset, config, psdPath);
+            ShowNotification(new GUIContent($"应用成功: {count} 个节点"));
+            UpdatePrefabStatus();
+
             bool autoFitGroups = EditorUtility.DisplayDialog("绑定完成",
                 "绑定已应用。\n是否自动调整 [空节点/组节点] 的位置？\n\n这会将所有空父节点移动到其子节点的中心，解决坐标偏移问题，利于分辨率适配。",
                 "调整 (推荐)", "跳过");
@@ -962,34 +633,6 @@ namespace PSDImporter
 
             ShowNotification(new GUIContent($"完成! ({count} 节点)"));
             UpdatePrefabStatus();
-            var mlConfig = config != null ? config.mlConfig : null;
-            if (mlConfig != null && mlConfig.autoLearnEnabled)
-            {
-                string psdPath = psdDataFile != null ? AssetDatabase.GetAssetPath(psdDataFile) : null;
-                PSDMatchAutoLearn.RecordAndMaybeTrain(psdPath, cachedPsdData, targetRoot.transform, bindings, config, mlConfig);
-            }
-        }
-
-        private void CreateNewUI()
-        {
-            if (!IsValidPsdDataFile()) return;
-            string path = AssetDatabase.GetAssetPath(psdDataFile);
-            var data = PSDLoader.ReadJson(path);
-            if (data == null) return;
-            var useConfig = config != null ? config : ScriptableObject.CreateInstance<PSDImportConfig>();
-            PSDCreateor.CreateUGUI_GenerateMode(data, useConfig);
-            ShowNotification(new GUIContent("Created!"));
-        }
-
-        private void OnModeChanged()
-        {
-            if (importMode == ImportMode.Create)
-            {
-                targetRoot = null;
-                prefabNodes.Clear();
-                selectedPrefabNode = null;
-            }
-            Repaint();
         }
 
         private bool IsValidPsdDataFile()
@@ -1035,94 +678,6 @@ namespace PSDImporter
                 rt.rect.height * previewZoom
             );
             return true;
-        }
-
-        private static float CalculateMatchScoreDetailed(PicData item, RectTransform node, Vector3 targetWorldPos, PSDImportConfig config, out ScoreBreakdown breakdown)
-        {
-            breakdown = new ScoreBreakdown();
-            if (config == null || node == null) return 0f;
-
-            float dist = Vector3.Distance(node.position, targetWorldPos);
-            float scorePos = 0f;
-            if (dist < config.maxDistanceError)
-            {
-                scorePos = (1f - (dist / config.maxDistanceError)) * 100f;
-            }
-
-            float diffW = Mathf.Abs(node.rect.width - item.width);
-            float diffH = Mathf.Abs(node.rect.height - item.height);
-            float scoreSize = 0f;
-            if ((diffW + diffH) < config.maxSizeDiff)
-            {
-                scoreSize = (1f - ((diffW + diffH) / config.maxSizeDiff)) * 100f;
-            }
-
-            float scoreType = IsTypeMatch(node, item.uiType) ? 100f : 0f;
-            bool pass = scorePos > 0f || scoreSize > 0f;
-            float weightedPos = scorePos * config.weightPosition;
-            float weightedSize = scoreSize * config.weightSize;
-            float weightedType = scoreType * config.weightType;
-            float total = pass ? (weightedPos + weightedSize + weightedType) : 0f;
-
-            breakdown.distance = dist;
-            breakdown.diffW = diffW;
-            breakdown.diffH = diffH;
-            breakdown.scorePos = scorePos;
-            breakdown.scoreSize = scoreSize;
-            breakdown.scoreType = scoreType;
-            breakdown.weightedPos = weightedPos;
-            breakdown.weightedSize = weightedSize;
-            breakdown.weightedType = weightedType;
-            breakdown.total = total;
-            breakdown.passThresholds = pass;
-
-            return total;
-        }
-
-        private float GetMatchScore(PicData item, RectTransform node, Vector3 targetWorldPos, PSDImportConfig config, bool useMlScore, PSDMatchModel mlModel, out ScoreBreakdown breakdown)
-        {
-            if (!useMlScore || mlModel == null)
-            {
-                return CalculateMatchScoreDetailed(item, node, targetWorldPos, config, out breakdown);
-            }
-
-            float maxDist = mlModel.maxDistanceError > 0f ? mlModel.maxDistanceError : config.maxDistanceError;
-            float maxSize = mlModel.maxSizeDiff > 0f ? mlModel.maxSizeDiff : config.maxSizeDiff;
-            int maxDepth = mlModel.maxDepthDiff > 0 ? mlModel.maxDepthDiff : (config != null && config.mlConfig != null ? config.mlConfig.maxDepthDiff : 10);
-
-            float[] x = PSDMatchFeatureExtractor.ExtractFeatures(item, node, targetRoot.transform, cachedPsdData.width, cachedPsdData.height, maxDist, maxSize, maxDepth);
-            float prob = PSDMatchML.Predict(mlModel, x);
-            float score = prob * 100f;
-
-            CalculateMatchScoreDetailed(item, node, targetWorldPos, config, out breakdown);
-            breakdown.mlProb = prob;
-            breakdown.mlUsed = true;
-            return score;
-        }
-
-        private static bool IsTypeMatch(Transform node, string psdType)
-        {
-            if (psdType == "Button") return node.GetComponent<Button>() != null;
-            if (psdType == "Text") return node.GetComponent<Text>() != null;
-            if (psdType == "RawImage") return node.GetComponent<RawImage>() != null;
-            if (psdType == "Image") return node.GetComponent<Image>() != null && node.GetComponent<Button>() == null;
-            if (psdType == "Layout") return node.GetComponent<LayoutGroup>() != null;
-            if (psdType == "Item") return node.GetComponent<LayoutGroup>() == null && node.GetComponentInParent<LayoutGroup>() != null;
-            return false;
-        }
-
-        private static string GetTransformPath(Transform t)
-        {
-            if (t == null) return string.Empty;
-            var parts = new List<string>();
-            var current = t;
-            while (current != null)
-            {
-                parts.Add(current.name);
-                current = current.parent;
-            }
-            parts.Reverse();
-            return string.Join("/", parts);
         }
 
         private void DrawLegend()
