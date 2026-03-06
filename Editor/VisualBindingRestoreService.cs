@@ -3,7 +3,6 @@ using System.Linq;
 using System.Text;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace PSDImporter
 {
@@ -203,7 +202,7 @@ namespace PSDImporter
                 {
                     foreach (var bind in pendingBinds)
                     {
-                        bind.statusInfo = "No suitable node found";
+                        bind.statusInfo = nodeCount == 0 ? "No candidates" : "No suitable node found";
                     }
                     return;
                 }
@@ -211,6 +210,14 @@ namespace PSDImporter
                 float[,] scoreMatrix = new float[itemCount, nodeCount];
                 bool[,] validMatrix = new bool[itemCount, nodeCount];
                 float maxScore = 0f;
+                List<int> matrixBindIndices = new List<int>();
+                HashSet<BindingPairViewModel> noCandidateBinds = new HashSet<BindingPairViewModel>();
+
+                Dictionary<RectTransform, int> nodeIndexMap = new Dictionary<RectTransform, int>();
+                for (int i = 0; i < nodeList.Count; i++)
+                {
+                    nodeIndexMap[nodeList[i]] = i;
+                }
 
                 for (int i = 0; i < itemCount; i++)
                 {
@@ -219,14 +226,23 @@ namespace PSDImporter
                     float localY = bind.psdItem.y - cachedPsdData.height * 0.5f;
                     Vector3 targetWorldPos = rootTransform.TransformPoint(new Vector3(localX, localY, 0));
                     List<MatchCandidate> localCandidates = logCandidatesInLoop ? new List<MatchCandidate>() : null;
-                    int skippedType = 0;
-
-                    for (int j = 0; j < nodeCount; j++)
+                    var candidateBuild = PSDCandidateBuilder.BuildCandidates(bind.psdItem, nodeList, rootTransform, cachedPsdData, matchConfig);
+                    if (candidateBuild.candidates.Count == 0)
                     {
-                        var node = nodeList[j];
-                        if (!IsTypeMatch(node, bind.psdItem.uiType))
+                        bind.statusInfo = "No candidates";
+                        noCandidateBinds.Add(bind);
+                    }
+                    else
+                    {
+                        matrixBindIndices.Add(i);
+                    }
+
+                    for (int c = 0; c < candidateBuild.candidates.Count; c++)
+                    {
+                        var node = candidateBuild.candidates[c];
+                        int j;
+                        if (!nodeIndexMap.TryGetValue(node, out j))
                         {
-                            skippedType++;
                             continue;
                         }
 
@@ -256,7 +272,8 @@ namespace PSDImporter
                     if (logCandidatesInLoop)
                     {
                         StringBuilder sb = new StringBuilder();
-                        sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
+                        var f = candidateBuild.filtered;
+                        sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={candidateBuild.candidates.Count} filtered(type:{f.type}, depth:{f.depth}, distance:{f.distance}, size:{f.size}, layout:{f.layout}) skipped(inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
                         var top = localCandidates.OrderByDescending(c => c.score).Take(5).ToList();
                         for (int k = 0; k < top.Count; k++)
                         {
@@ -275,12 +292,17 @@ namespace PSDImporter
                 {
                     foreach (var bind in pendingBinds)
                     {
+                        if (noCandidateBinds.Contains(bind))
+                        {
+                            continue;
+                        }
                         bind.statusInfo = "No suitable node found";
                     }
                     return;
                 }
 
-                int size = Mathf.Max(itemCount, nodeCount);
+                int matrixItemCount = matrixBindIndices.Count;
+                int size = Mathf.Max(matrixItemCount, nodeCount);
                 float invalidCost = maxScore + 1000f;
                 float[,] cost = new float[size, size];
                 for (int i = 0; i < size; i++)
@@ -291,21 +313,23 @@ namespace PSDImporter
                     }
                 }
 
-                for (int i = 0; i < itemCount; i++)
+                for (int mi = 0; mi < matrixItemCount; mi++)
                 {
+                    int i = matrixBindIndices[mi];
                     for (int j = 0; j < nodeCount; j++)
                     {
                         if (validMatrix[i, j])
                         {
-                            cost[i, j] = maxScore - scoreMatrix[i, j];
+                            cost[mi, j] = maxScore - scoreMatrix[i, j];
                         }
                     }
                 }
 
                 int[] assignment = PSDHungarianSolver.Solve(cost);
-                for (int i = 0; i < itemCount; i++)
+                for (int mi = 0; mi < matrixItemCount; mi++)
                 {
-                    int j = assignment[i];
+                    int i = matrixBindIndices[mi];
+                    int j = assignment[mi];
                     if (j < 0 || j >= nodeCount)
                     {
                         continue;
@@ -351,6 +375,11 @@ namespace PSDImporter
                 {
                     if (!matchedBindings.Contains(bind))
                     {
+                        if (noCandidateBinds.Contains(bind))
+                        {
+                            bind.statusInfo = "No candidates";
+                            continue;
+                        }
                         bind.statusInfo = "No suitable node found";
                     }
                 }
@@ -433,15 +462,10 @@ namespace PSDImporter
             Vector3 targetWorldPos = rootTransform.TransformPoint(new Vector3(localX, localY, 0));
 
             List<MatchCandidate> localCandidates = new List<MatchCandidate>();
-            int skippedType = 0;
-            for (int j = 0; j < nodes.Count; j++)
+            var candidateBuild = PSDCandidateBuilder.BuildCandidates(bind.psdItem, nodes, rootTransform, cachedPsdData, config);
+            for (int j = 0; j < candidateBuild.candidates.Count; j++)
             {
-                var node = nodes[j];
-                if (!IsTypeMatch(node, bind.psdItem.uiType))
-                {
-                    skippedType++;
-                    continue;
-                }
+                var node = candidateBuild.candidates[j];
 
                 ScoreBreakdown breakdown;
                 float score = GetMatchScore(bind.psdItem, node, targetWorldPos, config, useMlScore, mlModel, rootTransform, cachedPsdData, out breakdown);
@@ -457,7 +481,8 @@ namespace PSDImporter
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
+            var f = candidateBuild.filtered;
+            sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) pos=({bind.psdItem.x:F1},{bind.psdItem.y:F1}) size=({bind.psdItem.width:F1},{bind.psdItem.height:F1}) targetWorld=({targetWorldPos.x:F1},{targetWorldPos.y:F1}) candidates={localCandidates.Count} filtered(type:{f.type}, depth:{f.depth}, distance:{f.distance}, size:{f.size}, layout:{f.layout}) skipped(inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
             var top = localCandidates.OrderByDescending(c => c.score).Take(5).ToList();
             for (int k = 0; k < top.Count; k++)
             {
@@ -494,7 +519,7 @@ namespace PSDImporter
                 scoreSize = (1f - ((diffW + diffH) / config.maxSizeDiff)) * 100f;
             }
 
-            float scoreType = IsTypeMatch(node, item.uiType) ? 100f : 0f;
+            float scoreType = PSDCandidateBuilder.IsTypeMatch(node, item.uiType) ? 100f : 0f;
             bool pass = scorePos > 0f || scoreSize > 0f;
             float weightedPos = scorePos * config.weightPosition;
             float weightedSize = scoreSize * config.weightSize;
@@ -544,17 +569,6 @@ namespace PSDImporter
             breakdown.mlProb = prob;
             breakdown.mlUsed = true;
             return score;
-        }
-
-        private static bool IsTypeMatch(Transform node, string psdType)
-        {
-            if (psdType == "Button") return node.GetComponent<Button>() != null;
-            if (psdType == "Text") return node.GetComponent<Text>() != null;
-            if (psdType == "RawImage") return node.GetComponent<RawImage>() != null;
-            if (psdType == "Image") return node.GetComponent<Image>() != null && node.GetComponent<Button>() == null;
-            if (psdType == "Layout") return node.GetComponent<LayoutGroup>() != null;
-            if (psdType == "Item") return node.GetComponent<LayoutGroup>() == null && node.GetComponentInParent<LayoutGroup>() != null;
-            return false;
         }
 
         private static string GetTransformPath(Transform t)
