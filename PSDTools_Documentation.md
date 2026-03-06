@@ -150,3 +150,27 @@ A：脚本会对组或智能对象执行合并/栅格化来避免黑图；如异
 - 当前匹配参数  
 - 每个 PSD 项的 Top5 候选评分拆解  
 - 跳过原因统计（inactive/occupied/root）
+
+### 5.6 匹配流水线与坐标系约定
+为避免规则匹配与 ML 特征在“同一输入”下出现口径偏差，当前匹配流水线统一为三步：
+
+1) **统一几何抽取**：
+   - Unity 节点使用 `PSDMatchGeometry.ExtractNodeGeom`，在 `root` 的本地坐标系下得到 `centerLocal/sizeLocal/anchor/depth`。
+   - PSD 图层使用 `PSDMatchGeometry.BuildPsdGeom`，同样映射到以 PSD 画布中心为原点的本地坐标口径。
+
+2) **统一评分入口**：
+   - 规则评分统一走 `PSDMatchScoring.Evaluate`，输出 `ScoreBreakdown`（距离、尺寸差、位置分、尺寸分、类型分、加权总分等）。
+   - `PSDMatchingStrategy` 与 `VisualBindingRestoreService` 不再重复维护距离/尺寸公式，仅作为调用方。
+
+3) **统一特征口径（ML）**：
+   - `PSDMatchFeatureExtractor` 的 `distNorm/sizeNorm/sameDepth/anchorDiff` 由 `PSDMatchScoring.BuildGeometryBreakdown` 提供，确保与规则路径共享同一几何结果。
+
+### 5.7 编辑器侧静态回归样例
+- 回归入口：`PSDTools/Debug/Run Match Scoring Regression`。
+- Fixture：`Editor/Fixtures/PSDMatchScoringRegression.fixture.json`。
+- 校验目标：同一组几何输入下，以下三条路径输出一致：
+  1. `PSDMatchScoring.Evaluate`（统一评分入口）
+  2. `PSDMatchingStrategy.CalculateMatchScoreFromGeometry`
+  3. `VisualBindingRestoreService.CalculateScoreFromGeometry`
+- 同时校验 ML 特征中的几何项（dist/size/depth/anchor）与统一几何拆解一致。
+

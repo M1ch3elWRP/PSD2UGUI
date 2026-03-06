@@ -11,19 +11,21 @@ namespace PSDImporter
     {
         private struct ScoreBreakdown
         {
-            public float distance;
-            public float diffW;
-            public float diffH;
-            public float scorePos;
-            public float scoreSize;
-            public float scoreType;
-            public float weightedPos;
-            public float weightedSize;
-            public float weightedType;
-            public float total;
-            public bool passThresholds;
+            public PSDMatchScoring.ScoreBreakdown core;
             public float mlProb;
             public bool mlUsed;
+
+            public float distance => core.geometry.distance;
+            public float diffW => core.geometry.diffW;
+            public float diffH => core.geometry.diffH;
+            public float scorePos => core.scorePos;
+            public float scoreSize => core.scoreSize;
+            public float scoreType => core.scoreType;
+            public float weightedPos => core.weightedPos;
+            public float weightedSize => core.weightedSize;
+            public float weightedType => core.weightedType;
+            public float total => core.total;
+            public bool passThresholds => core.passThresholds;
         }
 
         private class MatchCandidate
@@ -530,47 +532,25 @@ namespace PSDImporter
         private static float CalculateMatchScoreDetailed(PicData item, RectTransform node, PSDMatchGeometry.PsdGeom psdGeom, RectTransform root, PSDImportConfig config, out ScoreBreakdown breakdown)
         {
             breakdown = new ScoreBreakdown();
-            if (config == null || node == null || root == null)
+            if (config == null || item == null || node == null || root == null)
             {
                 return 0f;
             }
 
             var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(node, root);
-            float dist = Vector2.Distance(nodeGeom.centerLocal, psdGeom.centerLocal);
-            float scorePos = 0f;
-            if (dist < config.maxDistanceError)
-            {
-                scorePos = (1f - (dist / config.maxDistanceError)) * 100f;
-            }
+            bool typeMatch = IsTypeMatch(node, item.uiType);
+            breakdown.core = CalculateScoreFromGeometry(nodeGeom, psdGeom, typeMatch, config);
+            return breakdown.total;
+        }
 
-            float diffW = Mathf.Abs(nodeGeom.sizeLocal.x - psdGeom.sizeLocal.x);
-            float diffH = Mathf.Abs(nodeGeom.sizeLocal.y - psdGeom.sizeLocal.y);
-            float scoreSize = 0f;
-            if ((diffW + diffH) < config.maxSizeDiff)
-            {
-                scoreSize = (1f - ((diffW + diffH) / config.maxSizeDiff)) * 100f;
-            }
-
-            float scoreType = IsTypeMatch(node, item.uiType) ? 100f : 0f;
-            bool pass = scorePos > 0f || scoreSize > 0f;
-            float weightedPos = scorePos * config.weightPosition;
-            float weightedSize = scoreSize * config.weightSize;
-            float weightedType = scoreType * config.weightType;
-            float total = pass ? (weightedPos + weightedSize + weightedType) : 0f;
-
-            breakdown.distance = dist;
-            breakdown.diffW = diffW;
-            breakdown.diffH = diffH;
-            breakdown.scorePos = scorePos;
-            breakdown.scoreSize = scoreSize;
-            breakdown.scoreType = scoreType;
-            breakdown.weightedPos = weightedPos;
-            breakdown.weightedSize = weightedSize;
-            breakdown.weightedType = weightedType;
-            breakdown.total = total;
-            breakdown.passThresholds = pass;
-
-            return total;
+        internal static PSDMatchScoring.ScoreBreakdown CalculateScoreFromGeometry(
+            PSDMatchGeometry.NodeGeom nodeGeom,
+            PSDMatchGeometry.PsdGeom psdGeom,
+            bool isTypeMatch,
+            PSDImportConfig config)
+        {
+            var input = PSDMatchScoring.ScoringInput.FromConfig(nodeGeom, psdGeom, isTypeMatch, config);
+            return PSDMatchScoring.Evaluate(input);
         }
 
         private static float GetMatchScore(
