@@ -80,6 +80,17 @@ namespace PSDImporter
         [Tooltip("When enabled, inactive prefab nodes are ignored during auto match.")]
         public bool skipInactiveMatch = false;
 
+        [Tooltip("Allow items to stay unmatched by assigning them to dummy slots.")]
+        public bool allowUnmatched = true;
+
+        [Tooltip("Score threshold used as dummy match cost when allowUnmatched is enabled.")]
+        [Min(0f)]
+        public float unmatchedPenalty = 120f;
+
+        [Tooltip("Minimum acceptable score for a real node assignment. Lower scores are marked unmatched.")]
+        [Min(0f)]
+        public float minAcceptScore = 1f;
+
         [Header("Debug Options")]
         [Tooltip("Always print Top5 candidates even when all items are matched by ID.")]
         public bool forceCandidateLog = false;

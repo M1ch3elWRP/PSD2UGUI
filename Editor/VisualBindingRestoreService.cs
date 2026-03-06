@@ -88,7 +88,7 @@ namespace PSDImporter
 
                 if (logDetail)
                 {
-                    Debug.Log($"[Match] Config maxDist={matchConfig.maxDistanceError:F1}, maxSizeDiff={matchConfig.maxSizeDiff:F1}, weightPos={matchConfig.weightPosition:F2}, weightSize={matchConfig.weightSize:F2}, weightType={matchConfig.weightType:F2}, skipInactive={matchConfig.skipInactiveMatch}, forceCandidateLog={forceCandidateLog}, useMlScore={useMlScore}");
+                    Debug.Log($"[Match] Config maxDist={matchConfig.maxDistanceError:F1}, maxSizeDiff={matchConfig.maxSizeDiff:F1}, weightPos={matchConfig.weightPosition:F2}, weightSize={matchConfig.weightSize:F2}, weightType={matchConfig.weightType:F2}, skipInactive={matchConfig.skipInactiveMatch}, allowUnmatched={matchConfig.allowUnmatched}, unmatchedPenalty={matchConfig.unmatchedPenalty:F1}, minAcceptScore={matchConfig.minAcceptScore:F1}, forceCandidateLog={forceCandidateLog}, useMlScore={useMlScore}");
                 }
 
                 foreach (var bind in bindings)
@@ -275,7 +275,7 @@ namespace PSDImporter
                     }
                 }
 
-                if (maxScore <= 0f)
+                if (maxScore <= 0f && !matchConfig.allowUnmatched)
                 {
                     foreach (var bind in pendingBinds)
                     {
@@ -284,8 +284,13 @@ namespace PSDImporter
                     return;
                 }
 
-                int size = Mathf.Max(itemCount, nodeCount);
-                float invalidCost = maxScore + 1000f;
+                int dummyCount = matchConfig.allowUnmatched ? itemCount : 0;
+                int totalColumns = nodeCount + dummyCount;
+                int size = Mathf.Max(itemCount, totalColumns);
+                float referenceScore = Mathf.Max(maxScore, matchConfig.unmatchedPenalty);
+                float invalidCost = referenceScore + 1000f;
+                float dummyCost = Mathf.Max(0f, referenceScore - matchConfig.unmatchedPenalty);
+
                 float[,] cost = new float[size, size];
                 for (int i = 0; i < size; i++)
                 {
@@ -301,7 +306,15 @@ namespace PSDImporter
                     {
                         if (validMatrix[i, j])
                         {
-                            cost[i, j] = maxScore - scoreMatrix[i, j];
+                            cost[i, j] = referenceScore - scoreMatrix[i, j];
+                        }
+                    }
+
+                    if (matchConfig.allowUnmatched)
+                    {
+                        for (int d = 0; d < dummyCount; d++)
+                        {
+                            cost[i, nodeCount + d] = dummyCost;
                         }
                     }
                 }
@@ -309,28 +322,60 @@ namespace PSDImporter
                 int[] assignment = PSDHungarianSolver.Solve(cost);
                 for (int i = 0; i < itemCount; i++)
                 {
+                    var bind = pendingBinds[i];
                     int j = assignment[i];
-                    if (j < 0 || j >= nodeCount)
+                    bool isDummyAssignment = j >= nodeCount && j < totalColumns;
+
+                    if (j < 0 || j >= totalColumns)
                     {
+                        bind.unityNode = null;
+                        bind.score = 0f;
+                        bind.isConfirmed = false;
+                        bind.statusInfo = "Unmatched: invalid assignment";
+                        continue;
+                    }
+
+                    if (isDummyAssignment)
+                    {
+                        bind.unityNode = null;
+                        bind.score = 0f;
+                        bind.isConfirmed = false;
+                        bind.statusInfo = "Unmatched: assigned to dummy";
                         continue;
                     }
 
                     if (!validMatrix[i, j])
                     {
+                        bind.unityNode = null;
+                        bind.score = 0f;
+                        bind.isConfirmed = false;
+                        bind.statusInfo = "Unmatched: invalid candidate";
                         continue;
                     }
 
-                    var bind = pendingBinds[i];
                     var node = nodeList[j];
                     if (occupiedNodes.Contains(node.transform))
                     {
+                        bind.unityNode = null;
+                        bind.score = 0f;
+                        bind.isConfirmed = false;
+                        bind.statusInfo = "Unmatched: node already occupied";
                         continue;
                     }
 
                     bind.unityNode = node;
                     bind.score = scoreMatrix[i, j];
-                    bind.statusInfo = $"Score: {bind.score:F0}";
                     bind.isIdMatched = false;
+
+                    if (matchConfig.allowUnmatched && bind.score < matchConfig.minAcceptScore)
+                    {
+                        bind.unityNode = null;
+                        bind.isConfirmed = false;
+                        bind.statusInfo = $"Unmatched: score {bind.score:F1} < minAcceptScore {matchConfig.minAcceptScore:F1}";
+                        continue;
+                    }
+
+                    bind.statusInfo = $"Score: {bind.score:F0}";
                     if (bind.score > perfectThreshold)
                     {
                         bind.isConfirmed = true;
@@ -353,11 +398,15 @@ namespace PSDImporter
 
                 foreach (var bind in pendingBinds)
                 {
-                    if (!matchedBindings.Contains(bind))
+                    if (!matchedBindings.Contains(bind) && bind.unityNode == null && string.IsNullOrEmpty(bind.statusInfo))
                     {
                         bind.statusInfo = "No suitable node found";
                     }
                 }
+
+                int unmatchedCount = bindings.Count(b => b.unityNode == null);
+                float unmatchedRate = bindings.Count > 0 ? (float)unmatchedCount / bindings.Count : 0f;
+                Debug.Log($"[Match] Unmatched rate: {unmatchedCount}/{bindings.Count} ({unmatchedRate:P1})");
             }
             finally
             {

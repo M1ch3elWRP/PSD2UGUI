@@ -36,5 +36,8 @@ MonoBehaviour:
   verticalLayoutComponent: {fileID: 0}
   gridLayoutComponent: {fileID: 0}
   skipInactiveMatch: 0
+  allowUnmatched: 1
+  unmatchedPenalty: 120
+  minAcceptScore: 1
   forceCandidateLog: 0
   mlConfig: {fileID: 11400000, guid: f513ffef5b434985bd1f2fc8403c2e46, type: 2}
