@@ -97,9 +97,13 @@ function run() {
         // 初始全隐藏 (这是原版逻辑的起点)
         hideAllLayers(exportDoc);
 
-        var json = '{\n"canvas":{';
-        json += '"width":' + exportDoc.width.as("px") + "," + '"height":' + exportDoc.height.as("px") + "},";
-        json += '\n"pngdata":{\n';
+        var canvasWidth = exportDoc.width.as("px");
+        var canvasHeight = exportDoc.height.as("px");
+        var legacyPngDataMap = {};
+        var assets = [];
+        var skeleton = [];
+        var skeletonByNodeId = {};
+        collectSkeletonNodes(exportDoc, null, 0, "", skeleton, skeletonByNodeId, canvasWidth, canvasHeight);
 
         // Skins 分组
         var skins = { "root": [] };
@@ -131,11 +135,10 @@ function run() {
             if (!skins.hasOwnProperty(skinName)) continue;
             var skinLayers = skins[skinName];
             
-            json += '\t"';
             var skname = (skinName == "root") ? "root" : skinName;
             skname = skname.replace(/\/+/g, "/"); 
             if(skname == "root") skname = "root/"; else skname += "/";
-            json += skname + '":\n\t[\n';
+            if (!legacyPngDataMap[skname]) legacyPngDataMap[skname] = [];
 
             for (var i = skinLayers.length - 1; i >= 0; i--) {
                 var layer = skinLayers[i];
@@ -337,37 +340,97 @@ function run() {
                 for(var z=0; z<layers.length; z++) { if(layers[z] == sourceLayer) { idx = z; break; } }
                 var index = (layers.length - 1) - idx; 
 
-                var jsonDataItem = '\t\t{"pngname":"' + slotName + '"';
-                jsonDataItem += ',"id":' + sourceLayerId;
-                jsonDataItem += ',"index":' + index;
-                jsonDataItem += ',"x":' + x;
-                jsonDataItem += ',"y":' + y;
-                jsonDataItem += ',"width":' + Math.round(width);
-                jsonDataItem += ',"height":' + Math.round(height);
-                jsonDataItem += ',"uiType":"' + suffixType + '"';
-                if (usedPrecalc) jsonDataItem += ',"precalc":true,"precalcOrigin":"bottom-left"';
-
                 var treatAsText = (layer.typename == "ArtLayer" && layer.kind == LayerKind.TEXT && suffixType == "Normal");
+                var textContent = "";
+                var textSize = 0;
+                var textColor = "";
                 if (treatAsText) {
                     try {
                         var ti = layer.textItem;
-                        var txtContent = escapeForJson(ti.contents);
-                        var txtSize = getTextSizePx(layer, ti, exportDoc, pngScale);
-                        var txtColor = rgbToHex(ti.color);
-                        jsonDataItem += ',"isText":true,"content":"' + txtContent + '","fontSize":' + txtSize + ',"fontColor":"#' + txtColor + '"';
-                    } catch (e) { jsonDataItem += ',"isText":false'; }
-                } else { jsonDataItem += ',"isText":false'; }
+                        textContent = ti.contents;
+                        textSize = getTextSizePx(layer, ti, exportDoc, pngScale);
+                        textColor = "#" + rgbToHex(ti.color);
+                    } catch (e) {
+                        treatAsText = false;
+                    }
+                }
 
-                jsonDataItem += '}';
-                json += jsonDataItem;
-                json += (i > 0) ? ",\n" : "\n";
+                var legacyItem = {
+                    pngname: slotName,
+                    id: sourceLayerId,
+                    index: index,
+                    x: x,
+                    y: y,
+                    width: Math.round(width),
+                    height: Math.round(height),
+                    uiType: suffixType,
+                    isText: treatAsText
+                };
+                if (usedPrecalc) {
+                    legacyItem.precalc = true;
+                    legacyItem.precalcOrigin = "bottom-left";
+                }
+                if (treatAsText) {
+                    legacyItem.content = textContent;
+                    legacyItem.fontSize = textSize;
+                    legacyItem.fontColor = textColor;
+                }
+                legacyPngDataMap[skname].push(legacyItem);
+
+                var sourcePath = getLayerSourcePath(sourceLayer);
+                var sourceBounds = getLayerBoundsPx(sourceLayer);
+                var parentNodeId = null;
+                try {
+                    if (sourceLayer.parent && sourceLayer.parent.typename != "Document") parentNodeId = sourceLayer.parent.id;
+                } catch (ignoredParent) {}
+
+                var tagList = parseTagList(rawName);
+                var assetId = "asset_" + sourceLayerId + "_" + index;
+                var isExported = !!(shouldSave && width > 0 && height > 0);
+                var assetRecord = {
+                    assetId: assetId,
+                    sourceNodeId: sourceLayerId,
+                    parentNodeId: parentNodeId,
+                    name: layerName(sourceLayer),
+                    pngName: slotName,
+                    exportPath: finalDir + slotName + ".png",
+                    uiType: suffixType,
+                    tagList: tagList,
+                    absBounds: rectObjFromBounds(sourceBounds),
+                    trimBounds: { x: x - width / 2, y: y - height / 2, width: Math.round(width), height: Math.round(height) },
+                    sourcePath: sourcePath,
+                    isExported: isExported
+                };
+                assets.push(assetRecord);
+
+                var skeletonNode = skeletonByNodeId[sourceLayerId];
+                if (skeletonNode) {
+                    skeletonNode.exportAssetRef = assetId;
+                    skeletonNode.hasVisualOutput = skeletonNode.hasVisualOutput || isExported;
+                    skeletonNode.isStructureOnly = !skeletonNode.hasVisualOutput;
+                }
             }
-            json += "\t\]";
             skinIndex++;
-            json += (skinIndex < totalSkins) ? ",\n" : "\n";
         }
+        var meta = {
+            version: 2,
+            schema: "psd2unity-export-v2",
+            canvas: { width: canvasWidth, height: canvasHeight },
+            psdName: decodeURI(originalDoc.name),
+            generatedAtUtc: (new Date()).toUTCString(),
+            pngScale: pngScale,
+            trimWhitespace: trimWhitespace,
+            onlyTagged: onlyTagged
+        };
 
-        json += '}\n}';
+        var jsonRoot = {
+            meta: meta,
+            assets: assets,
+            skeleton: skeleton,
+            canvas: meta.canvas,
+            pngdata: legacyPngDataMap
+        };
+        var json = toPrettyJson(jsonRoot);
 
         // Write JSON
         if (writeJson) {
@@ -452,6 +515,159 @@ function preCalculateAllGroupBounds(doc) {
 // =========================================================
 // Helpers (Standard)
 // =========================================================
+
+function collectSkeletonNodes(parent, parentNodeId, depth, parentPath, outList, mapByNodeId, canvasW, canvasH) {
+    for (var i = 0; i < parent.layers.length; i++) {
+        var layer = parent.layers[i];
+        var rawName = layer.name;
+        var pathName = sanitizePathSegment(rawName);
+        var sourcePath = parentPath ? (parentPath + "/" + pathName) : pathName;
+        var layerTypeInfo = inferLayerTypeInfo(layer, rawName);
+        var abs = getLayerBoundsPx(layer);
+        var local = abs;
+        if (parentNodeId != null && mapByNodeId[parentNodeId] && mapByNodeId[parentNodeId].absBounds) {
+            var pAbs = mapByNodeId[parentNodeId].absBounds;
+            local = {
+                l: abs.l - pAbs.x,
+                t: abs.t - pAbs.y,
+                r: abs.r - pAbs.x,
+                b: abs.b - pAbs.y
+            };
+        }
+
+        var width = Math.max(0, abs.r - abs.l);
+        var height = Math.max(0, abs.b - abs.t);
+        var centerX = abs.l + width * 0.5;
+        var centerY = canvasH - (abs.t + height * 0.5);
+        var childrenCount = (layer.typename == "LayerSet") ? layer.layers.length : 0;
+        var isGroup = (layer.typename == "LayerSet");
+        var hasVisualOutput = (!isGroup && width > 0 && height > 0);
+
+        var node = {
+            nodeId: layer.id,
+            parentNodeId: parentNodeId,
+            name: layerName(layer),
+            rawLayerName: rawName,
+            layerType: layerTypeInfo.layerType,
+            sourcePath: sourcePath,
+            depth: depth,
+            siblingIndex: i,
+            visible: layer.visible,
+            opacity: getLayerOpacity(layer),
+            absBounds: { x: abs.l, y: abs.t, width: width, height: height },
+            localBounds: { x: local.l, y: local.t, width: Math.max(0, local.r - local.l), height: Math.max(0, local.b - local.t) },
+            width: width,
+            height: height,
+            x: abs.l,
+            y: abs.t,
+            centerX: centerX,
+            centerY: centerY,
+            tagList: parseTagList(rawName),
+            uiTypeHint: layerTypeInfo.uiTypeHint,
+            layoutHint: layerTypeInfo.layoutHint,
+            groupRoleHint: layerTypeInfo.groupRoleHint,
+            exportAssetRef: "",
+            hasVisualOutput: hasVisualOutput,
+            isStructureOnly: !hasVisualOutput,
+            childrenCount: childrenCount,
+            isLeaf: childrenCount == 0,
+            isGroup: isGroup
+        };
+        outList.push(node);
+        mapByNodeId[layer.id] = node;
+
+        if (isGroup) {
+            collectSkeletonNodes(layer, layer.id, depth + 1, sourcePath, outList, mapByNodeId, canvasW, canvasH);
+        }
+    }
+}
+
+function inferLayerTypeInfo(layer, rawName) {
+    var info = {
+        layerType: layer.typename,
+        uiTypeHint: "Normal",
+        layoutHint: "None",
+        groupRoleHint: (layer.typename == "LayerSet") ? "Group" : "Leaf"
+    };
+    if (layer.typename == "ArtLayer" && layer.kind == LayerKind.TEXT) {
+        info.layerType = "Text";
+        info.uiTypeHint = "Text";
+    } else if (rawName.indexOf("@ImgNoTrim") != -1 || rawName.indexOf("@Img") != -1 || rawName.indexOf("@Bg") != -1) {
+        info.uiTypeHint = "Image";
+    } else if (rawName.indexOf("@Btn") != -1) {
+        info.uiTypeHint = "Button";
+        info.groupRoleHint = "ContainerCandidate";
+    } else if (rawName.indexOf("@H") != -1) {
+        info.uiTypeHint = "Horizontal";
+        info.layoutHint = "Horizontal";
+        info.groupRoleHint = "ContainerCandidate";
+    } else if (rawName.indexOf("@V") != -1) {
+        info.uiTypeHint = "Vertical";
+        info.layoutHint = "Vertical";
+        info.groupRoleHint = "ContainerCandidate";
+    } else if (rawName.indexOf("@G") != -1) {
+        info.uiTypeHint = "Grid";
+        info.layoutHint = "Grid";
+        info.groupRoleHint = "ContainerCandidate";
+    } else if (rawName.indexOf("@Item") != -1) {
+        info.uiTypeHint = "Item";
+        info.groupRoleHint = "ContainerCandidate";
+    }
+    if (layer.typename == "LayerSet" && info.groupRoleHint == "Group") info.groupRoleHint = "GroupCandidate";
+    return info;
+}
+
+function getLayerOpacity(layer) {
+    try { return layer.opacity; } catch (e) { return 100; }
+}
+
+function getLayerBoundsPx(layer) {
+    try {
+        var b = layer.bounds;
+        var l = b[0].as("px");
+        var t = b[1].as("px");
+        var r = b[2].as("px");
+        var bot = b[3].as("px");
+        return { l: l, t: t, r: r, b: bot };
+    } catch (e) {
+        return { l: 0, t: 0, r: 0, b: 0 };
+    }
+}
+
+function rectObjFromBounds(b) {
+    return { x: b.l, y: b.t, width: Math.max(0, b.r - b.l), height: Math.max(0, b.b - b.t) };
+}
+
+function sanitizePathSegment(name) {
+    if (!name) return "";
+    return name.replace(/[\/\\]/g, "_");
+}
+
+function getLayerSourcePath(layer) {
+    var path = sanitizePathSegment(layer.name);
+    var p = layer.parent;
+    while (p && p.typename != "Document") {
+        path = sanitizePathSegment(p.name) + "/" + path;
+        p = p.parent;
+    }
+    return path;
+}
+
+function parseTagList(rawName) {
+    var tags = [];
+    if (!rawName) return tags;
+    var m = rawName.match(/@[A-Za-z0-9_]+/g);
+    if (!m) return tags;
+    for (var i = 0; i < m.length; i++) tags.push(m[i]);
+    return tags;
+}
+
+function toPrettyJson(obj) {
+    if (typeof JSON !== "undefined" && JSON.stringify) {
+        return JSON.stringify(obj, null, 2);
+    }
+    return obj.toSource();
+}
 
 function collectLayers(parent, collect, onlyTagged) {
     for (var i = 0; i < parent.layers.length; i++) {

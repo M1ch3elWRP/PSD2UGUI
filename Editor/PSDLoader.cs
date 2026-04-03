@@ -71,15 +71,29 @@ namespace PSDImporter
             psdData.width = (int)jopxdata["width"];
             psdData.height = (int)jopxdata["height"];
 
-            JObject jp = (JObject)jsonJo["pngdata"];
-            foreach (JProperty group in jp.Children())
-            {
-                foreach (var pngdata in group.Value)
-                {
-                    JObject jodata = (JObject)pngdata;
-                    var data = ParsePicData(group.Name, jodata, psdData.height);
-                    psdData.listPngData.Add(data);
+            JObject jp = jsonJo["pngdata"] as JObject;
+            JArray assets = jsonJo["assets"] as JArray;
 
+            if (assets != null && assets.Count > 0)
+            {
+                for (int i = 0; i < assets.Count; i++)
+                {
+                    JObject asset = assets[i] as JObject;
+                    if (asset == null) continue;
+                    var data = ParsePicDataFromAsset(asset, psdData.height, i);
+                    psdData.listPngData.Add(data);
+                }
+            }
+            else if (jp != null)
+            {
+                foreach (JProperty group in jp.Children())
+                {
+                    foreach (var pngdata in group.Value)
+                    {
+                        JObject jodata = (JObject)pngdata;
+                        var data = ParsePicData(group.Name, jodata, psdData.height);
+                        psdData.listPngData.Add(data);
+                    }
                 }
             }
 
@@ -259,6 +273,27 @@ namespace PSDImporter
             }
 
             return data;
+        }
+
+        private static PicData ParsePicDataFromAsset(JObject asset, int canvasHeight, int fallbackIndex)
+        {
+            var converted = new JObject
+            {
+                ["pngname"] = asset["pngName"] ?? asset["name"] ?? "",
+                ["id"] = asset["sourceNodeId"] ?? 0,
+                ["index"] = fallbackIndex,
+                ["x"] = asset["trimBounds"]?["x"] != null && asset["trimBounds"]?["width"] != null
+                    ? (float)asset["trimBounds"]["x"] + ((float?)asset["trimBounds"]["width"] ?? 0f) * 0.5f
+                    : (float?)asset["absBounds"]?["x"] ?? 0f,
+                ["y"] = asset["trimBounds"]?["y"] != null && asset["trimBounds"]?["height"] != null
+                    ? (float)asset["trimBounds"]["y"] + ((float?)asset["trimBounds"]["height"] ?? 0f) * 0.5f
+                    : (float?)asset["absBounds"]?["y"] ?? 0f,
+                ["width"] = (float?)asset["trimBounds"]?["width"] ?? (float?)asset["absBounds"]?["width"] ?? 0f,
+                ["height"] = (float?)asset["trimBounds"]?["height"] ?? (float?)asset["absBounds"]?["height"] ?? 0f,
+                ["uiType"] = asset["uiType"] ?? "Normal",
+                ["isText"] = false
+            };
+            return ParsePicData("root/", converted, canvasHeight);
         }
 
         private static int StableHash32(string value)
