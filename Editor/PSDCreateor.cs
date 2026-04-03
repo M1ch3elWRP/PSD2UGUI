@@ -29,6 +29,13 @@ namespace PSDImporter
             rootRectTrans.anchoredPosition = Vector2.zero;
             rootRectTrans.localScale = Vector3.one;
 
+            if (psdData.HasSkeleton)
+            {
+                CreateUGUI_GenerateModeWithSkeleton(psdData, config, rootRectTrans);
+                Debug.Log("<color=cyan>[PSD Create] 生成完毕（Skeleton优先）。</color>");
+                return;
+            }
+
             foreach (var item in psdData.listPngData)
             {
                 RectTransform tranParent = BuildHierarchy(rootRectTrans, item.groupName);
@@ -40,6 +47,57 @@ namespace PSDImporter
                 OnNodeCreated?.Invoke(createdGo, item.pngName);
             }
             Debug.Log("<color=cyan>[PSD Create] 生成完毕。</color>");
+        }
+
+        private static void CreateUGUI_GenerateModeWithSkeleton(PSDData psdData, PSDImportConfig config, RectTransform rootRectTrans)
+        {
+            var nodeGoMap = new Dictionary<int, GameObject>();
+            var orderedNodes = new List<PsdSkeletonNode>(psdData.skeleton);
+            orderedNodes.Sort((a, b) =>
+            {
+                int d = a.depth.CompareTo(b.depth);
+                if (d != 0) return d;
+                return a.siblingIndex.CompareTo(b.siblingIndex);
+            });
+
+            // 1) 先按 skeleton 还原完整层级（含中间节点）
+            foreach (var node in orderedNodes)
+            {
+                Transform parent = rootRectTrans;
+                if (node.hasParent && nodeGoMap.TryGetValue(node.parentNodeId, out var parentGo))
+                {
+                    parent = parentGo.transform;
+                }
+
+                string nodeName = !string.IsNullOrEmpty(node.name) ? node.name : node.rawLayerName;
+                if (string.IsNullOrEmpty(nodeName)) nodeName = $"node_{node.nodeId}";
+                var nodeRt = CreateGo<RectTransform>(nodeName, parent, "UI");
+                nodeRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, node.width);
+                nodeRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, node.height);
+                nodeRt.localScale = Vector3.one;
+                nodeRt.anchoredPosition = PsdTopLeftToAnchored(node.x, node.y, node.width, node.height, psdData.width, psdData.height);
+
+                nodeGoMap[node.nodeId] = nodeRt.gameObject;
+            }
+
+            // 2) 再按 assets 刷新视觉/组件到对应节点
+            foreach (var item in psdData.listPngData)
+            {
+                GameObject targetGo = null;
+                if (item.id != 0 && nodeGoMap.TryGetValue(item.id, out var found))
+                {
+                    targetGo = found;
+                }
+                else
+                {
+                    // 兜底：维持旧逻辑
+                    RectTransform tranParent = BuildHierarchy(rootRectTrans, item.groupName);
+                    targetGo = CreateNodeObject(item, tranParent, config);
+                }
+
+                RefreshNode(targetGo, item, psdData, true, config);
+                OnNodeCreated?.Invoke(targetGo, item.pngName);
+            }
         }
 
         // =========================================================================
@@ -726,6 +784,15 @@ namespace PSDImporter
                 }
             }
             return current;
+        }
+
+        private static Vector2 PsdTopLeftToAnchored(float xTopLeft, float yTopLeft, float width, float height, int canvasWidth, int canvasHeight)
+        {
+            float centerX = xTopLeft + width * 0.5f;
+            float centerYFromTop = yTopLeft + height * 0.5f;
+            float anchoredX = centerX - canvasWidth * 0.5f;
+            float anchoredY = canvasHeight * 0.5f - centerYFromTop;
+            return new Vector2(anchoredX, anchoredY);
         }
     }
 }
