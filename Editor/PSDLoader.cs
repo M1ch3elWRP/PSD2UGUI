@@ -48,6 +48,29 @@ namespace PSDImporter
         public int width;              // 画布宽
         public int height;             // 画布高
         public List<PicData> listPngData = new List<PicData>();
+        public List<PsdSkeletonNode> skeleton = new List<PsdSkeletonNode>();
+        public bool HasSkeleton => skeleton != null && skeleton.Count > 0;
+    }
+
+    [Serializable]
+    public class PsdSkeletonNode
+    {
+        public int nodeId;
+        public int parentNodeId;
+        public bool hasParent;
+        public string name;
+        public string rawLayerName;
+        public string sourcePath;
+        public int depth;
+        public int siblingIndex;
+        public bool isGroup;
+        public bool isStructureOnly;
+        public string uiTypeHint;
+        public string layoutHint;
+        public float x;
+        public float y;
+        public float width;
+        public float height;
     }
 
     // ---------------------------------------------------------
@@ -71,15 +94,33 @@ namespace PSDImporter
             psdData.width = (int)jopxdata["width"];
             psdData.height = (int)jopxdata["height"];
 
-            JObject jp = (JObject)jsonJo["pngdata"];
-            foreach (JProperty group in jp.Children())
-            {
-                foreach (var pngdata in group.Value)
-                {
-                    JObject jodata = (JObject)pngdata;
-                    var data = ParsePicData(group.Name, jodata, psdData.height);
-                    psdData.listPngData.Add(data);
+            JObject jp = jsonJo["pngdata"] as JObject;
+            JArray assets = jsonJo["assets"] as JArray;
+            JArray skeleton = jsonJo["skeleton"] as JArray;
 
+            Dictionary<int, string> groupNameByNodeId = BuildGroupNameMapFromSkeleton(skeleton);
+            ParseSkeleton(psdData, skeleton);
+
+            if (assets != null && assets.Count > 0)
+            {
+                for (int i = 0; i < assets.Count; i++)
+                {
+                    JObject asset = assets[i] as JObject;
+                    if (asset == null) continue;
+                    var data = ParsePicDataFromAsset(asset, psdData.height, i, groupNameByNodeId);
+                    psdData.listPngData.Add(data);
+                }
+            }
+            else if (jp != null)
+            {
+                foreach (JProperty group in jp.Children())
+                {
+                    foreach (var pngdata in group.Value)
+                    {
+                        JObject jodata = (JObject)pngdata;
+                        var data = ParsePicData(group.Name, jodata, psdData.height);
+                        psdData.listPngData.Add(data);
+                    }
                 }
             }
 
@@ -259,6 +300,115 @@ namespace PSDImporter
             }
 
             return data;
+        }
+
+        private static PicData ParsePicDataFromAsset(JObject asset, int canvasHeight, int fallbackIndex, Dictionary<int, string> groupNameByNodeId)
+        {
+            int sourceNodeId = (int?)asset["sourceNodeId"] ?? 0;
+            string groupName = "root/";
+            if (sourceNodeId != 0 && groupNameByNodeId != null && groupNameByNodeId.TryGetValue(sourceNodeId, out string mappedGroup))
+            {
+                groupName = mappedGroup;
+            }
+            else
+            {
+                groupName = GroupNameFromSourcePath((string)asset["sourcePath"]);
+            }
+
+            var converted = new JObject
+            {
+                ["pngname"] = asset["pngName"] ?? asset["name"] ?? "",
+                ["id"] = sourceNodeId,
+                ["index"] = fallbackIndex,
+                ["x"] = asset["trimBounds"]?["x"] != null && asset["trimBounds"]?["width"] != null
+                    ? (float)asset["trimBounds"]["x"] + ((float?)asset["trimBounds"]["width"] ?? 0f) * 0.5f
+                    : (float?)asset["absBounds"]?["x"] ?? 0f,
+                ["y"] = asset["trimBounds"]?["y"] != null && asset["trimBounds"]?["height"] != null
+                    ? (float)asset["trimBounds"]["y"] + ((float?)asset["trimBounds"]["height"] ?? 0f) * 0.5f
+                    : (float?)asset["absBounds"]?["y"] ?? 0f,
+                ["width"] = (float?)asset["trimBounds"]?["width"] ?? (float?)asset["absBounds"]?["width"] ?? 0f,
+                ["height"] = (float?)asset["trimBounds"]?["height"] ?? (float?)asset["absBounds"]?["height"] ?? 0f,
+                ["uiType"] = asset["uiType"] ?? "Normal",
+                ["isText"] = false
+            };
+            return ParsePicData(groupName, converted, canvasHeight);
+        }
+
+        private static void ParseSkeleton(PSDData psdData, JArray skeletonArray)
+        {
+            if (skeletonArray == null) return;
+
+            for (int i = 0; i < skeletonArray.Count; i++)
+            {
+                var jo = skeletonArray[i] as JObject;
+                if (jo == null) continue;
+                var n = new PsdSkeletonNode
+                {
+                    nodeId = (int?)jo["nodeId"] ?? 0,
+                    parentNodeId = (int?)jo["parentNodeId"] ?? 0,
+                    hasParent = jo["parentNodeId"] != null,
+                    name = (string)jo["name"] ?? string.Empty,
+                    rawLayerName = (string)jo["rawLayerName"] ?? string.Empty,
+                    sourcePath = (string)jo["sourcePath"] ?? string.Empty,
+                    depth = (int?)jo["depth"] ?? 0,
+                    siblingIndex = (int?)jo["siblingIndex"] ?? 0,
+                    isGroup = (bool?)jo["isGroup"] ?? false,
+                    isStructureOnly = (bool?)jo["isStructureOnly"] ?? false,
+                    uiTypeHint = (string)jo["uiTypeHint"] ?? "Normal",
+                    layoutHint = (string)jo["layoutHint"] ?? "None",
+                    x = (float?)jo["x"] ?? (float?)jo["absBounds"]?["x"] ?? 0f,
+                    y = (float?)jo["y"] ?? (float?)jo["absBounds"]?["y"] ?? 0f,
+                    width = (float?)jo["width"] ?? (float?)jo["absBounds"]?["width"] ?? 0f,
+                    height = (float?)jo["height"] ?? (float?)jo["absBounds"]?["height"] ?? 0f
+                };
+                psdData.skeleton.Add(n);
+            }
+        }
+
+        private static Dictionary<int, string> BuildGroupNameMapFromSkeleton(JArray skeletonArray)
+        {
+            var map = new Dictionary<int, string>();
+            if (skeletonArray == null) return map;
+
+            var parentByNode = new Dictionary<int, int?>();
+            var nameByNode = new Dictionary<int, string>();
+            for (int i = 0; i < skeletonArray.Count; i++)
+            {
+                var jo = skeletonArray[i] as JObject;
+                if (jo == null) continue;
+                int nodeId = (int?)jo["nodeId"] ?? 0;
+                if (nodeId == 0) continue;
+                parentByNode[nodeId] = (int?)jo["parentNodeId"];
+                nameByNode[nodeId] = (string)jo["name"] ?? (string)jo["rawLayerName"] ?? string.Empty;
+            }
+
+            foreach (var kv in parentByNode)
+            {
+                int nodeId = kv.Key;
+                var segs = new List<string>();
+                int? cursor = kv.Value;
+                int guard = 0;
+                while (cursor.HasValue && guard < 2048)
+                {
+                    guard++;
+                    if (!nameByNode.TryGetValue(cursor.Value, out string parentName)) break;
+                    if (!string.IsNullOrEmpty(parentName)) segs.Add(parentName);
+                    if (!parentByNode.TryGetValue(cursor.Value, out int? nextParent)) break;
+                    cursor = nextParent;
+                }
+                segs.Reverse();
+                map[nodeId] = segs.Count > 0 ? string.Join("/", segs) + "/" : "root/";
+            }
+
+            return map;
+        }
+
+        private static string GroupNameFromSourcePath(string sourcePath)
+        {
+            if (string.IsNullOrEmpty(sourcePath)) return "root/";
+            int idx = sourcePath.LastIndexOf('/');
+            if (idx <= 0) return "root/";
+            return sourcePath.Substring(0, idx) + "/";
         }
 
         private static int StableHash32(string value)
