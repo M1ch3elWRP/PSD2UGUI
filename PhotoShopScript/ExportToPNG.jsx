@@ -91,19 +91,28 @@ function run() {
         var layers = [];
         collectLayers(exportDoc, layers, onlyTagged);
 
-        // 记录原始可见性 (用于导出组时保留隐藏状态)
-        cacheVisibleState(exportDoc);
-
-        // 初始全隐藏 (这是原版逻辑的起点)
-        hideAllLayers(exportDoc);
-
         var canvasWidth = exportDoc.width.as("px");
         var canvasHeight = exportDoc.height.as("px");
         var legacyPngDataMap = {};
         var assets = [];
         var skeleton = [];
         var skeletonByNodeId = {};
-        collectSkeletonNodes(exportDoc, null, 0, "", skeleton, skeletonByNodeId, canvasWidth, canvasHeight);
+        var exportWarnings = [];
+        // 先采集 skeleton，再做 hide/trim，避免某些 Photoshop 版本在隐藏层状态下读取 bounds 报“命令不可用”
+        // 兜底：若 skeleton 采集失败，不中断主导出流程（仍导出 pngdata/assets）
+        try {
+            collectSkeletonNodes(exportDoc, null, 0, "", skeleton, skeletonByNodeId, canvasWidth, canvasHeight, exportWarnings);
+        } catch (skeletonErr) {
+            skeleton = [];
+            skeletonByNodeId = {};
+            pushWarning(exportWarnings, "skeleton_collect_failed", skeletonErr);
+        }
+
+        // 记录原始可见性 (用于导出组时保留隐藏状态)
+        cacheVisibleState(exportDoc);
+
+        // 初始全隐藏 (这是原版逻辑的起点)
+        hideAllLayers(exportDoc);
 
         // Skins 分组
         var skins = { "root": [] };
@@ -420,7 +429,8 @@ function run() {
             generatedAtUtc: (new Date()).toUTCString(),
             pngScale: pngScale,
             trimWhitespace: trimWhitespace,
-            onlyTagged: onlyTagged
+            onlyTagged: onlyTagged,
+            warnings: exportWarnings
         };
 
         var jsonRoot = {
@@ -516,68 +526,81 @@ function preCalculateAllGroupBounds(doc) {
 // Helpers (Standard)
 // =========================================================
 
-function collectSkeletonNodes(parent, parentNodeId, depth, parentPath, outList, mapByNodeId, canvasW, canvasH) {
+function collectSkeletonNodes(parent, parentNodeId, depth, parentPath, outList, mapByNodeId, canvasW, canvasH, warnings) {
     for (var i = 0; i < parent.layers.length; i++) {
-        var layer = parent.layers[i];
-        var rawName = layer.name;
-        var pathName = sanitizePathSegment(rawName);
-        var sourcePath = parentPath ? (parentPath + "/" + pathName) : pathName;
-        var layerTypeInfo = inferLayerTypeInfo(layer, rawName);
-        var abs = getLayerBoundsPx(layer);
-        var local = abs;
-        if (parentNodeId != null && mapByNodeId[parentNodeId] && mapByNodeId[parentNodeId].absBounds) {
-            var pAbs = mapByNodeId[parentNodeId].absBounds;
-            local = {
-                l: abs.l - pAbs.x,
-                t: abs.t - pAbs.y,
-                r: abs.r - pAbs.x,
-                b: abs.b - pAbs.y
-            };
+        var layer = null;
+        try { layer = parent.layers[i]; } catch (layerAccessErr) {
+            pushWarning(warnings, "skeleton_layer_access_failed", layerAccessErr);
+            continue;
         }
+        if (!layer) continue;
 
-        var width = Math.max(0, abs.r - abs.l);
-        var height = Math.max(0, abs.b - abs.t);
-        var centerX = abs.l + width * 0.5;
-        var centerY = canvasH - (abs.t + height * 0.5);
-        var childrenCount = (layer.typename == "LayerSet") ? layer.layers.length : 0;
-        var isGroup = (layer.typename == "LayerSet");
-        var hasVisualOutput = (!isGroup && width > 0 && height > 0);
+        try {
+            var rawName = safeLayerName(layer);
+            var pathName = sanitizePathSegment(rawName);
+            var sourcePath = parentPath ? (parentPath + "/" + pathName) : pathName;
+            var layerTypeInfo = inferLayerTypeInfo(layer, rawName);
+            var abs = getLayerBoundsPx(layer);
+            var local = abs;
+            if (parentNodeId != null && mapByNodeId[parentNodeId] && mapByNodeId[parentNodeId].absBounds) {
+                var pAbs = mapByNodeId[parentNodeId].absBounds;
+                local = {
+                    l: abs.l - pAbs.x,
+                    t: abs.t - pAbs.y,
+                    r: abs.r - pAbs.x,
+                    b: abs.b - pAbs.y
+                };
+            }
 
-        var node = {
-            nodeId: layer.id,
-            parentNodeId: parentNodeId,
-            name: layerName(layer),
-            rawLayerName: rawName,
-            layerType: layerTypeInfo.layerType,
-            sourcePath: sourcePath,
-            depth: depth,
-            siblingIndex: i,
-            visible: layer.visible,
-            opacity: getLayerOpacity(layer),
-            absBounds: { x: abs.l, y: abs.t, width: width, height: height },
-            localBounds: { x: local.l, y: local.t, width: Math.max(0, local.r - local.l), height: Math.max(0, local.b - local.t) },
-            width: width,
-            height: height,
-            x: abs.l,
-            y: abs.t,
-            centerX: centerX,
-            centerY: centerY,
-            tagList: parseTagList(rawName),
-            uiTypeHint: layerTypeInfo.uiTypeHint,
-            layoutHint: layerTypeInfo.layoutHint,
-            groupRoleHint: layerTypeInfo.groupRoleHint,
-            exportAssetRef: "",
-            hasVisualOutput: hasVisualOutput,
-            isStructureOnly: !hasVisualOutput,
-            childrenCount: childrenCount,
-            isLeaf: childrenCount == 0,
-            isGroup: isGroup
-        };
-        outList.push(node);
-        mapByNodeId[layer.id] = node;
+            var width = Math.max(0, abs.r - abs.l);
+            var height = Math.max(0, abs.b - abs.t);
+            var centerX = abs.l + width * 0.5;
+            var centerY = canvasH - (abs.t + height * 0.5);
+            var isGroup = (layer.typename == "LayerSet");
+            var childrenCount = isGroup ? safeChildCount(layer) : 0;
+            var hasVisualOutput = (!isGroup && width > 0 && height > 0);
+            var nodeId = safeLayerId(layer);
 
-        if (isGroup) {
-            collectSkeletonNodes(layer, layer.id, depth + 1, sourcePath, outList, mapByNodeId, canvasW, canvasH);
+            var node = {
+                nodeId: nodeId,
+                parentNodeId: parentNodeId,
+                name: layerName(layer),
+                rawLayerName: rawName,
+                layerType: layerTypeInfo.layerType,
+                sourcePath: sourcePath,
+                depth: depth,
+                siblingIndex: i,
+                visible: safeLayerVisible(layer),
+                opacity: getLayerOpacity(layer),
+                absBounds: { x: abs.l, y: abs.t, width: width, height: height },
+                localBounds: { x: local.l, y: local.t, width: Math.max(0, local.r - local.l), height: Math.max(0, local.b - local.t) },
+                width: width,
+                height: height,
+                x: abs.l,
+                y: abs.t,
+                centerX: centerX,
+                centerY: centerY,
+                tagList: parseTagList(rawName),
+                uiTypeHint: layerTypeInfo.uiTypeHint,
+                layoutHint: layerTypeInfo.layoutHint,
+                groupRoleHint: layerTypeInfo.groupRoleHint,
+                exportAssetRef: "",
+                hasVisualOutput: hasVisualOutput,
+                isStructureOnly: !hasVisualOutput,
+                childrenCount: childrenCount,
+                isLeaf: childrenCount == 0,
+                isGroup: isGroup
+            };
+            outList.push(node);
+            if (nodeId != 0) mapByNodeId[nodeId] = node;
+
+            if (isGroup) {
+                collectSkeletonNodes(layer, nodeId, depth + 1, sourcePath, outList, mapByNodeId, canvasW, canvasH, warnings);
+            }
+        } catch (nodeErr) {
+            // 单节点失败不影响整体导出
+            pushWarning(warnings, "skeleton_node_failed@" + i, nodeErr);
+            continue;
         }
     }
 }
@@ -643,6 +666,22 @@ function sanitizePathSegment(name) {
     return name.replace(/[\/\\]/g, "_");
 }
 
+function safeLayerId(layer) {
+    try { return layer.id; } catch (e) { return 0; }
+}
+
+function safeLayerName(layer) {
+    try { return layer.name || ""; } catch (e) { return ""; }
+}
+
+function safeLayerVisible(layer) {
+    try { return !!layer.visible; } catch (e) { return false; }
+}
+
+function safeChildCount(layer) {
+    try { return layer.layers ? layer.layers.length : 0; } catch (e) { return 0; }
+}
+
 function getLayerSourcePath(layer) {
     var path = sanitizePathSegment(layer.name);
     var p = layer.parent;
@@ -667,6 +706,14 @@ function toPrettyJson(obj) {
         return JSON.stringify(obj, null, 2);
     }
     return obj.toSource();
+}
+
+function pushWarning(warnings, code, err) {
+    if (!warnings) return;
+    if (warnings.length >= 50) return; // 防止异常风暴导致 JSON 过大
+    var msg = "";
+    try { msg = err ? ("" + err) : ""; } catch (ignored) {}
+    warnings.push({ code: code, message: msg });
 }
 
 function collectLayers(parent, collect, onlyTagged) {
