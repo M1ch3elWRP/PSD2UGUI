@@ -91,6 +91,18 @@ namespace PSDImporter
         [Min(0f)]
         public float minAcceptScore = 1f;
 
+        [Header("Layered Matching (Phase 3.5 Pre-Lock)")]
+        [Tooltip("Enable high-confidence pre-lock before Hungarian algorithm to prevent global-optimal misassignment.\nWhen enabled, match pairs exceeding threshold with exclusive-optimal detection are locked before Hungarian runs.")]
+        public bool preLockEnabled = false;
+
+        [Tooltip("Minimum score for a match pair to be considered high-confidence pre-lockable.\nPairs scoring above this AND passing exclusive-optimal check will be pre-locked before Hungarian.\nRecommended: higher than perfectThreshold (150), e.g. 200.")]
+        [Min(0f)]
+        public float preLockThreshold = 200f;
+
+        [Tooltip("Column uniqueness ratio (0.5~1). A node is 'contested' if another PSD row scores >= bestScore * ratio on the same column.\nLower value = stricter (less likely to pre-lock). Recommended: 0.80~0.90.")]
+        [Range(0.5f, 1f)]
+        public float preLockColumnUniquenessRatio = 0.85f;
+
         [Header("Debug Options")]
         [Tooltip("Always print Top5 candidates even when all items are matched by ID.")]
         public bool forceCandidateLog = false;

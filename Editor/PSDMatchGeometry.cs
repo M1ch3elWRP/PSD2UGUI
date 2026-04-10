@@ -63,7 +63,7 @@ namespace PSDImporter
         public static PsdGeom BuildPsdGeom(PicData item, int psdWidth, int psdHeight)
         {
             PsdGeom geom = default;
-            if (item == null)
+            if (item.Equals(null))
             {
                 return geom;
             }

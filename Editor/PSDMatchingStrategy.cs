@@ -25,7 +25,8 @@ namespace PSDImporter
             int psdHeight,
             PSDImportConfig config)
         {
-            if (item == null || node == null || root == null || config == null)
+            // PicData is a struct, use default/null check compatible with value types
+            if (item.Equals(default) || node == null || root == null || config == null)
             {
                 return 0f;
             }

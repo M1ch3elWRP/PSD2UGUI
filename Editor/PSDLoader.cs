@@ -67,6 +67,13 @@ namespace PSDImporter
         public bool isStructureOnly;
         public string uiTypeHint;
         public string layoutHint;
+        /// <summary>
+        /// JSX端标记：此节点是否有对应的导出资源(PNG/Text)。
+        /// 空的字符串=无导出资源，非空=有导出资源（如 "asset_001"）。
+        /// 比isStructureOnly更靠谱——因为ArtLayer只要有尺寸就会被标hasVisualOutput=true，
+        /// 但实际可能没有导出PNG（如纯形状残留层）。
+        /// </summary>
+        public string exportAssetRef;
         public float x;
         public float y;
         public float width;
@@ -80,6 +87,46 @@ namespace PSDImporter
     {
         const string exname = ".ps.data";
 
+        /// <summary>
+        /// Normalize .ps.data content to valid JSON.
+        /// Some ExportToPNG.jsx versions output JavaScript object literal format
+        /// (paren-wrapped, unquoted keys) instead of strict JSON.
+        /// This method detects and fixes both issues so JObject.Parse can handle it.
+        /// </summary>
+        private static string NormalizePsDataFormat(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+
+            // Strip outer parentheses if present: ({...}) → {...}
+            string trimmed = text.TrimStart();
+            if (trimmed.StartsWith("("))
+            {
+                trimmed = trimmed.Substring(1);
+                // Also strip trailing ) if present
+                if (trimmed.EndsWith(")"))
+                    trimmed = trimmed.Substring(0, trimmed.Length - 1);
+                text = trimmed;
+            }
+
+            // If first non-whitespace char is {, it's likely JS object literal with unquoted keys.
+            // Use regex to add double-quotes around unquoted object keys.
+            // This handles keys like: meta:{...}, assets:[...], "canvas":{width:2212,...}
+            // Pattern matches word characters followed by colon at key positions
+            string jsonCandidate = text.TrimStart();
+            if ((jsonCandidate.StartsWith("{") || jsonCandidate.StartsWith("[")) &&
+                !jsonCandidate.StartsWith("\""))
+            {
+                // Quote unquoted keys: match identifiers before ':' that are not already quoted
+                text = System.Text.RegularExpressions.Regex.Replace(
+                    text,
+                    @"(?<=[{\[,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:",
+                    "\"$1\":",
+                    System.Text.RegularExpressions.RegexOptions.Compiled);
+            }
+
+            return text;
+        }
+
         public static PSDData ReadJson(string jsonPath)
         {
             if (!jsonPath.EndsWith(exname)) return null;
@@ -88,6 +135,7 @@ namespace PSDImporter
             psdData.psdAssetsFolder = Path.GetDirectoryName(jsonPath);
 
             string jsonText = File.ReadAllText(jsonPath);
+            jsonText = NormalizePsDataFormat(jsonText);
             var jsonJo = JObject.Parse(jsonText);
 
             JObject jopxdata = (JObject)jsonJo["canvas"];
@@ -133,7 +181,7 @@ namespace PSDImporter
         {
             var data = new PicData();
             data.groupName = groupName;
-            data.pngName = (string)jodata["pngname"];
+            data.pngName = ((string)jodata["pngname"]).Trim(); // trim: 防 JSX 端残留前/后空白导致文件名不匹配
 
             // 解析 ID (确保 JS 脚本导出了 id 字段)
             if (jodata["id"] != null) data.id = (int)jodata["id"];
@@ -329,8 +377,16 @@ namespace PSDImporter
                 ["width"] = (float?)asset["trimBounds"]?["width"] ?? (float?)asset["absBounds"]?["width"] ?? 0f,
                 ["height"] = (float?)asset["trimBounds"]?["height"] ?? (float?)asset["absBounds"]?["height"] ?? 0f,
                 ["uiType"] = asset["uiType"] ?? "Normal",
-                ["isText"] = false
+                // v2 fix: read isText from JSX asset record instead of hardcoding false
+                ["isText"] = (bool?)asset["isText"] ?? false
             };
+            // Pass through text-layer fields if present in the asset record
+            if (converted["isText"].ToObject<bool>())
+            {
+                converted["content"] = asset["textContent"] ?? "";
+                converted["fontSize"] = asset["fontSize"];
+                converted["fontColor"] = asset["fontColor"] ?? "#000000";
+            }
             return ParsePicData(groupName, converted, canvasHeight);
         }
 
@@ -356,6 +412,7 @@ namespace PSDImporter
                     isStructureOnly = (bool?)jo["isStructureOnly"] ?? false,
                     uiTypeHint = (string)jo["uiTypeHint"] ?? "Normal",
                     layoutHint = (string)jo["layoutHint"] ?? "None",
+                    exportAssetRef = (string)jo["exportAssetRef"] ?? string.Empty,
                     x = (float?)jo["x"] ?? (float?)jo["absBounds"]?["x"] ?? 0f,
                     y = (float?)jo["y"] ?? (float?)jo["absBounds"]?["y"] ?? 0f,
                     width = (float?)jo["width"] ?? (float?)jo["absBounds"]?["width"] ?? 0f,
@@ -406,9 +463,11 @@ namespace PSDImporter
         private static string GroupNameFromSourcePath(string sourcePath)
         {
             if (string.IsNullOrEmpty(sourcePath)) return "root/";
-            int idx = sourcePath.LastIndexOf('/');
+            // trim: 防 JSX 端残留前后空白（旧 .ps.data 数据兼容）
+            string trimmed = sourcePath.Trim();
+            int idx = trimmed.LastIndexOf('/');
             if (idx <= 0) return "root/";
-            return sourcePath.Substring(0, idx) + "/";
+            return trimmed.Substring(0, idx).Trim() + "/";
         }
 
         private static int StableHash32(string value)

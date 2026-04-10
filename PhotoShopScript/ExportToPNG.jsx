@@ -152,11 +152,23 @@ function run() {
             for (var i = skinLayers.length - 1; i >= 0; i--) {
                 var layer = skinLayers[i];
                 var sourceLayer = layer;
-                var sourceLayerId = layer.id;
-                var slotName = layerName(layer);
-                
+                // PS 2026 安全检查：确认当前迭代的 layer 引用仍然有效
+                // （前一次迭代的 history 回滚可能使引用失效）
+                var sourceLayerId = 0;
+                var slotName = "";
+                var rawName = "";
+                var isLayerSet = false;
+                try {
+                    sourceLayerId = layer.id || 0;
+                    slotName = layerName(layer);
+                    rawName = layer.name || "";
+                    isLayerSet = (layer.typename == "LayerSet");
+                } catch (headerErr) {
+                    // layer 引用已失效，跳过此图层
+                    continue;
+                }
+
                 // 类型判断
-                var rawName = layer.name;
                 var suffixType = "Normal";
                 var isContainer = false;
                 var useLayerBounds = false;
@@ -168,8 +180,6 @@ function run() {
                 else if (rawName.indexOf("@V") != -1) { suffixType = "Vertical"; isContainer = true; }
                 else if (rawName.indexOf("@G") != -1) { suffixType = "Grid"; isContainer = true; }
                 else if (rawName.indexOf("@Item") != -1) { suffixType = "Item"; isContainer = true; }
-
-                var isLayerSet = (layer.typename == "LayerSet");
 
                 // --- 坐标逻辑分流 ---
                 var x = 0, y = 0, width = 0, height = 0;
@@ -349,23 +359,29 @@ function run() {
                 for(var z=0; z<layers.length; z++) { if(layers[z] == sourceLayer) { idx = z; break; } }
                 var index = (layers.length - 1) - idx; 
 
-                var treatAsText = (layer.typename == "ArtLayer" && layer.kind == LayerKind.TEXT && suffixType == "Normal");
+                var treatAsText = false;
+                try { treatAsText = (layer.typename == "ArtLayer" && layer.kind == LayerKind.TEXT && suffixType == "Normal"); } catch (typeErr) {}
                 var textContent = "";
                 var textSize = 0;
                 var textColor = "";
                 if (treatAsText) {
                     try {
-                        var ti = layer.textItem;
-                        textContent = ti.contents;
-                        textSize = getTextSizePx(layer, ti, exportDoc, pngScale);
-                        textColor = "#" + rgbToHex(ti.color);
+                        // PS 2026 安全检查：确认图层引用仍然有效
+                        var ti = null;
+                        try { ti = layer.textItem; } catch (tiErr) { treatAsText = false; }
+                        if (!ti) { treatAsText = false; }
+                        else {
+                            textContent = ti.contents;
+                            textSize = getTextSizePx(layer, ti, exportDoc, pngScale);
+                            textColor = "#" + rgbToHex(ti.color);
+                        }
                     } catch (e) {
                         treatAsText = false;
                     }
                 }
 
                 var legacyItem = {
-                    pngname: slotName,
+                    pngname: String(slotName || "").replace(/^\s+|\s+$/g, ""),
                     id: sourceLayerId,
                     index: index,
                     x: x,
@@ -386,9 +402,22 @@ function run() {
                 }
                 legacyPngDataMap[skname].push(legacyItem);
 
-                var sourcePath = getLayerSourcePath(sourceLayer);
-                var sourceBounds = getLayerBoundsPx(sourceLayer);
+                // PS 2026 兼容性：sourceLayer 引用可能在导图流程中失效（merge/rasterize 后）
+                // 所有对 sourceLayer 的属性访问必须安全降级
+                var sourcePath = "";
+                var sourceBounds = { l:0, t:0, r:0, b:0 };
                 var parentNodeId = null;
+                var sourceLayerName = "";
+                try {
+                    sourcePath = getLayerSourcePath(sourceLayer);
+                    sourceBounds = getLayerBoundsPx(sourceLayer);
+                    sourceLayerName = layerName(sourceLayer);
+                } catch (srcErr) {
+                    // fallback: 用 rawName 和 slotName
+                    sourcePath = sanitizePathSegment(rawName || slotName || "");
+                    sourceBounds = { l:0, t:0, r:0, b:0 };
+                    sourceLayerName = stripSuffix(trim(rawName), ".png").replace(/[:\/\\*\?\"\<\>\|]/g, "") || slotName;
+                }
                 try {
                     if (sourceLayer.parent && sourceLayer.parent.typename != "Document") parentNodeId = sourceLayer.parent.id;
                 } catch (ignoredParent) {}
@@ -396,20 +425,30 @@ function run() {
                 var tagList = parseTagList(rawName);
                 var assetId = "asset_" + sourceLayerId + "_" + index;
                 var isExported = !!(shouldSave && width > 0 && height > 0);
+                // 统一 trim + String() 防护：防止 PS ExtendScript 返回非标准类型
+                var safePngName = String(slotName || "").replace(/^\s+|\s+$/g, "");
+                var safeSourceLayerName = String(sourceLayerName || "").replace(/^\s+|\s+$/g, "");
                 var assetRecord = {
                     assetId: assetId,
                     sourceNodeId: sourceLayerId,
                     parentNodeId: parentNodeId,
-                    name: layerName(sourceLayer),
-                    pngName: slotName,
-                    exportPath: finalDir + slotName + ".png",
+                    name: safeSourceLayerName,
+                    pngName: safePngName,
+                    exportPath: safePngName + ".png",
                     uiType: suffixType,
                     tagList: tagList,
                     absBounds: rectObjFromBounds(sourceBounds),
                     trimBounds: { x: x - width / 2, y: y - height / 2, width: Math.round(width), height: Math.round(height) },
                     sourcePath: sourcePath,
-                    isExported: isExported
+                    isExported: isExported,
+                    // Text-layer fields (v2 fix): carry text info into assets[] so C# can create Text nodes
+                    isText: !!treatAsText
                 };
+                if (treatAsText) {
+                    assetRecord.textContent = textContent;
+                    assetRecord.fontSize = textSize;
+                    assetRecord.fontColor = textColor;
+                }
                 assets.push(assetRecord);
 
                 var skeletonNode = skeletonByNodeId[sourceLayerId];
@@ -452,11 +491,23 @@ function run() {
             file.lineFeed = "\n";
             file.encoding = "UTF-8";
             file.write(json);
+
+            // Post-write validation: ensure generated JSON starts with { or [
+            if (!json || (json.charAt(0) != '{' && json.charAt(0) != '[')) {
+                alert("WARNING: Generated .ps.data is NOT valid JSON!\n" +
+                      "File: " + file.fsName +
+                      "\n\nFirst 80 characters:\n" + json.substring(0, 80) +
+                      "\n\nThe PSD import in Unity will fail. Please report this bug.");
+            }
+
             file.close();
         }
 
     } catch (e) {
-        alert("Export Error: " + e);
+        var errDetail = "" + e;
+        var errLine = (e && e.line) ? "\nAt Line: " + e.line : "";
+        // PS 2026 兼容性：executeActionGet("获取") 在图层引用失效时抛 "命令'获取'当前不可用"
+        alert("Export Error: " + errDetail + errLine);
     } finally {
         if (exportDoc) exportDoc.close(SaveOptions.DONOTSAVECHANGES);
         app.activeDocument = originalDoc;
@@ -477,9 +528,14 @@ function preCalculateAllGroupBounds(doc) {
     function getBoundsRec(node) {
         var myBounds = { l: 99999, t: 99999, r: -99999, b: -99999, empty: true };
         
-        if (node.typename == "ArtLayer") {
+        // PS 2026 兼容性：单节点访问保护
+        var nodeType = "";
+        try { nodeType = node.typename; } catch (e) { return myBounds; }
+        
+        if (nodeType == "ArtLayer") {
             if (!node.allLocked) { // 简单检查
-                var b = node.bounds;
+                var b = null;
+                try { b = node.bounds; } catch (e) { return myBounds; }
                 var l = b[0].as("px"); var t = b[1].as("px");
                 var r = b[2].as("px"); var bot = b[3].as("px");
                 if (r > l && bot > t) {
@@ -487,8 +543,10 @@ function preCalculateAllGroupBounds(doc) {
                 }
             }
         } 
-        else if (node.typename == "LayerSet") {
-            for (var i = 0; i < node.layers.length; i++) {
+        else if (nodeType == "LayerSet") {
+            var childCount = 0;
+            try { childCount = node.layers.length; } catch (e) { return myBounds; }
+            for (var i = 0; i < childCount; i++) {
                 var childBounds = getBoundsRec(node.layers[i]);
                 if (!childBounds.empty) {
                     myBounds.empty = false;
@@ -646,6 +704,7 @@ function getLayerOpacity(layer) {
 
 function getLayerBoundsPx(layer) {
     try {
+        // PS 2026 兼容性：快速检测 layer 引用是否有效
         var b = layer.bounds;
         var l = b[0].as("px");
         var t = b[1].as("px");
@@ -663,7 +722,11 @@ function rectObjFromBounds(b) {
 
 function sanitizePathSegment(name) {
     if (!name) return "";
-    return name.replace(/[\/\\]/g, "_");
+    // 强制转字符串，防止 PS ExtendScript 返回非标准类型导致 .replace/.trim 链式调用断裂
+    var s = String(name);
+    s = s.replace(/[:\/\\*\?\"\<\>\|]/g, "");
+    s = s.replace(/^\s+|\s+$/g, "");
+    return s;
 }
 
 function safeLayerId(layer) {
@@ -683,11 +746,20 @@ function safeChildCount(layer) {
 }
 
 function getLayerSourcePath(layer) {
-    var path = sanitizePathSegment(layer.name);
-    var p = layer.parent;
-    while (p && p.typename != "Document") {
-        path = sanitizePathSegment(p.name) + "/" + path;
-        p = p.parent;
+    // PS 2026 兼容性：layer 引用可能已失效（merge/rasterize/history-rollback 后）
+    var safeName = "";
+    try { safeName = layer.name || ""; } catch (e) { safeName = ""; }
+    var path = sanitizePathSegment(safeName);
+    var p = null;
+    try { p = layer.parent; } catch (e) {}
+    while (p) {
+        var pName = "";
+        var pType = "";
+        try { pName = p.name || ""; } catch (e) { break; }
+        try { pType = p.typename; } catch (e) { break; }
+        if (pType == "Document") break;
+        path = sanitizePathSegment(pName) + "/" + path;
+        try { p = p.parent; } catch (e) { break; }
     }
     return path;
 }
@@ -702,10 +774,58 @@ function parseTagList(rawName) {
 }
 
 function toPrettyJson(obj) {
-    if (typeof JSON !== "undefined" && JSON.stringify) {
-        return JSON.stringify(obj, null, 2);
+    // Single reliable path: hand-written recursive serializer.
+    // Zero dependency on any ExtendScript global object (JSON, toSource).
+    // This follows the same "zero external API" principle as the old version's
+    // string-concatenation approach, but supports arbitrary nesting depth.
+    //
+    // Root cause context: The previous 3-path fallback (JSON.stringify →
+    // toSource()+regex → serializeObject) produced corrupted output in some
+    // PS ExtendScript environments — missing braces, commas, and delimiters.
+    // The old script (v8, ~539 lines) had NO serialization function at all;
+    // it built JSON via pure string concatenation (json += "{...}") which was
+    // 100% reliable. We revert to that same philosophy here.
+    try {
+        var json = serializeObject(obj);
+        if (json && json.length >= 2) return json;
+    } catch (e) {
+        alert("Serialization Error: " + e);
     }
-    return obj.toSource();
+
+    // Absolute fallback — should never reach here
+    return "{}";
+}
+
+// Minimal recursive JSON serializer for ExtendScript environments without JSON global
+function serializeObject(o, depth) {
+    if (depth === undefined) depth = 0;
+    if (depth > 20) return "\"...\"";
+    if (o === null) return "null";
+    if (o === undefined) return "null";
+
+    var t = typeof o;
+    if (t == "string") return "\"" + o.replace(/\\/g,"\\\\").replace(/"/g,'\\"').replace(/\n/g,"\\n").replace(/\r/g,"") + "\"";
+    if (t == "number") return isFinite(o) ? String(o) : "null";
+    if (t == "boolean") return o ? "true" : "false";
+
+    if (o instanceof Array || (t == "object" && o.length !== undefined)) {
+        var parts = [];
+        for (var i = 0; i < o.length; i++) parts.push(serializeObject(o[i], depth + 1));
+        return "[" + parts.join(", ") + "]";
+    }
+
+    if (t == "object") {
+        var parts2 = [];
+        for (var k in o) {
+            if (!o.hasOwnProperty(k)) continue;
+            var val = o[k];
+            if (val === undefined) continue;  // Skip undefined — same behavior as JSON.stringify
+            parts2.push("\"" + k + "\": " + serializeObject(val, depth + 1));
+        }
+        return "{" + parts2.join(", ") + "}";
+    }
+
+    return "null";
 }
 
 function pushWarning(warnings, code, err) {
@@ -717,30 +837,35 @@ function pushWarning(warnings, code, err) {
 }
 
 function collectLayers(parent, collect, onlyTagged) {
-    for (var i = 0; i < parent.layers.length; i++) {
-        var layer = parent.layers[i];
-        if (ignoreHiddenLayers && !layer.visible) continue;
-        if (layer.typename == "ArtLayer") { if (layer.bounds[2] == 0 && layer.bounds[3] == 0) continue; }
+    var len = 0;
+    try { len = parent.layers.length; } catch (e) { return; }
+    for (var i = 0; i < len; i++) {
+        var layer = null;
+        try { layer = parent.layers[i]; } catch (e) { continue; }
+        if (!layer) continue;
+        try {
+            if (ignoreHiddenLayers && !layer.visible) continue;
+            if (layer.typename == "ArtLayer") { if (layer.bounds[2] == 0 && layer.bounds[3] == 0) continue; }
 
-        if (!onlyTagged) {
-            if (layer.typename == "ArtLayer") {
-                collect.push(layer);
-            } else if (layer.typename == "LayerSet") {
-                collectLayers(layer, collect, onlyTagged);
+            if (!onlyTagged) {
+                if (layer.typename == "ArtLayer") {
+                    collect.push(layer);
+                } else if (layer.typename == "LayerSet") {
+                    collectLayers(layer, collect, onlyTagged);
+                }
+                continue;
             }
-            continue;
-        }
 
-        var name = layer.name;
-        var hasTag = (name.indexOf("@") != -1);
-        var isAtomic = (name.indexOf("@Img") != -1 || name.indexOf("@Bg") != -1 || name.indexOf("@ImgNoTrim") != -1);
-        var isContainer = (name.indexOf("@Btn") != -1 || name.indexOf("@H") != -1 || name.indexOf("@V") != -1 || name.indexOf("@G") != -1 || name.indexOf("@Item") != -1);
+            var name = layer.name;
+            var hasTag = (name.indexOf("@") != -1);
+            var isAtomic = (name.indexOf("@Img") != -1 || name.indexOf("@Bg") != -1 || name.indexOf("@ImgNoTrim") != -1);
+            var isContainer = (name.indexOf("@Btn") != -1 || name.indexOf("@H") != -1 || name.indexOf("@V") != -1 || name.indexOf("@G") != -1 || name.indexOf("@Item") != -1);
 
-        if (hasTag) {
-            if (isAtomic) collect.push(layer);
-            else if (isContainer) { collect.push(layer); if (layer.typename == "LayerSet") collectLayers(layer, collect, onlyTagged); }
-            else if (layer.typename == "LayerSet") collectLayers(layer, collect, onlyTagged);
-            else collect.push(layer);
+            if (hasTag) {
+                if (isAtomic) collect.push(layer);
+                else if (isContainer) { collect.push(layer); if (layer.typename == "LayerSet") collectLayers(layer, collect, onlyTagged); }
+                else if (layer.typename == "LayerSet") collectLayers(layer, collect, onlyTagged);
+                else collect.push(layer);
         } else {
             if (layer.typename == "ArtLayer" && layer.kind == LayerKind.TEXT) {
                 collect.push(layer);
@@ -748,38 +873,54 @@ function collectLayers(parent, collect, onlyTagged) {
                 collectLayers(layer, collect, onlyTagged);
             }
         }
+        } catch (e) {}
     }
 }
 
 function hideAllLayers(doc) {
     function recurseHide(parent) {
-        for (var i=0; i<parent.layers.length; i++) {
-            parent.layers[i].visible = false;
-            if (parent.layers[i].typename == "LayerSet") recurseHide(parent.layers[i]);
+        var len = 0;
+        try { len = parent.layers.length; } catch (e) { return; }
+        for (var i=0; i<len; i++) {
+            try {
+                parent.layers[i].visible = false;
+                if (parent.layers[i].typename == "LayerSet") recurseHide(parent.layers[i]);
+            } catch (e) {}
         }
     }
     recurseHide(doc);
 }
 
 function makeLayerVisible(layer) {
-    layer.visible = true;
-    if (layer.typename == "LayerSet") setLayerSetChildrenVisible(layer);
-    var parent = layer.parent;
-    while (parent && parent.typename != "Document") {
-        parent.visible = true;
-        parent = parent.parent;
+    try { layer.visible = true; } catch (e) {}
+    var isSet = false;
+    try { isSet = (layer.typename == "LayerSet"); } catch (e) { return; }
+    if (isSet) setLayerSetChildrenVisible(layer);
+    var p = null;
+    try { p = layer.parent; } catch (e) { return; }
+    while (p) {
+        try { p.visible = true; } catch (e2) { break; }
+        try { if (p.typename == "Document") break; } catch (e3) { break; }
+        try { p = p.parent; } catch (e4) { break; }
     }
 }
 
 function setLayerSetChildrenVisible(layerSet) {
-    for (var i = 0; i < layerSet.layers.length; i++) {
-        var child = layerSet.layers[i];
-        if (ignoreHiddenLayers) {
-            child.visible = (visibleMap[child.id] === true);
-        } else {
-            child.visible = true;
-        }
-        if (child.typename == "LayerSet") setLayerSetChildrenVisible(child);
+    var len = 0;
+    try { len = layerSet.layers.length; } catch (e) { return; }
+    for (var i = 0; i < len; i++) {
+        var child = null;
+        try { child = layerSet.layers[i]; } catch (e) { continue; }
+        if (!child) continue;
+        try {
+            if (ignoreHiddenLayers) {
+                child.visible = (visibleMap[child.id] === true);
+            } else {
+                child.visible = true;
+            }
+            var childIsSet = (child.typename == "LayerSet");
+            if (childIsSet) setLayerSetChildrenVisible(child);
+        } catch (e) {}
     }
 }
 
@@ -793,7 +934,9 @@ function cacheVisibleState(doc) {
 function getGroupBoundsIgnoringOutliers(layerSet) {
     var items = [];
     collectVisibleLeafBounds(layerSet, items);
-    if (items.length == 0) return layerSet.bounds;
+    if (items.length == 0) {
+        try { return layerSet.bounds; } catch (e) { return boundsToArray({l:0,t:0,r:0,b:0}); }
+    }
 
     var mainBounds = null;
     for (var i = 0; i < items.length; i++) {
@@ -883,10 +1026,14 @@ function boundsToArray(b) {
 }
 
 function cacheVisibleStateRec(layer) {
-    visibleMap[layer.id] = layer.visible;
-    if (layer.typename == "LayerSet") {
-        for (var i = 0; i < layer.layers.length; i++) {
-            cacheVisibleStateRec(layer.layers[i]);
+    try { visibleMap[layer.id] = layer.visible; } catch (e) {}
+    var isSet = false;
+    try { isSet = (layer.typename == "LayerSet"); } catch (e) {}
+    if (isSet) {
+        var len = 0;
+        try { len = layer.layers.length; } catch (e) {}
+        for (var i = 0; i < len; i++) {
+            try { cacheVisibleStateRec(layer.layers[i]); } catch (e) {}
         }
     }
 }
@@ -1068,7 +1215,17 @@ function hasFilePath() { return originalDoc.path; }
 function countAssocArray(obj) { var c=0; for(var k in obj)c++; return c; }
 function trim(s) { return s.replace(/^\s+|\s+$/g, ""); }
 function stripSuffix(str, suffix) { if (endsWith(str.toLowerCase(), suffix.toLowerCase())) str = str.substring(0, str.length - suffix.length); return str; }
-function layerName(layer) { return stripSuffix(trim(layer.name), ".png").replace(/[:\/\\*\?\"\<\>\|]/g, ""); }
+function layerName(layer) {
+    // PS 2026 兼容性
+    var safeName = "";
+    try { safeName = layer.name || ""; } catch (e) { return "unknown_layer"; }
+    // 强制转字符串，防止 PS ExtendScript 返回非标准类型导致链式 .replace/.trim 断裂
+    safeName = String(safeName);
+    safeName = safeName.replace(/^\s+|\s+$/g, "");          // trim 前后空白
+    safeName = stripSuffix(safeName, ".png");               // strip 后缀
+    safeName = safeName.replace(/[:\/\\*\?\"\<\>\|]/g, ""); // 去非法字符
+    return safeName;
+}
 function getTextSizePx(layer, textItem, doc, scale) {
     var size = 0;
     var sizeBase = 0;
@@ -1139,6 +1296,11 @@ function getTextSizePx(layer, textItem, doc, scale) {
 function getTextLayerTransformScale(layer) {
     var scale = 1;
     try {
+        // PS 2026 兼容性检查：layer 对象可能已失效（merge/rasterize/history-rollback 后）
+        if (!layer || !layer.id || layer.id === 0) return 1;
+        // 额外校验：确认图层仍存在于文档中（通过 try bounds 访问快速检测）
+        try { var _testBounds = layer.bounds; } catch (boundsErr) { return 1; }
+
         var ref = new ActionReference();
         ref.putIdentifier(charIDToTypeID("Lyr "), layer.id);
         var desc = executeActionGet(ref);

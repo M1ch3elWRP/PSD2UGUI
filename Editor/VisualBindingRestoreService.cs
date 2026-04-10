@@ -35,6 +35,18 @@ namespace PSDImporter
             public ScoreBreakdown breakdown;
         }
 
+        /// <summary>
+        /// Phase 3.5 pre-lock result: a high-confidence PSD↔Node pair locked before Hungarian.
+        /// </summary>
+        private struct PreLockedPair
+        {
+            public int bindIndex;       // index into pendingBinds
+            public int nodeIndex;       // index into nodeList
+            public float score;
+            public bool isConfirmed;
+            public string reason;
+        }
+
         public static void RunAutoMatch(
             List<BindingPairViewModel> bindings,
             GameObject targetRoot,
@@ -262,6 +274,106 @@ namespace PSDImporter
                             sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy}{geomInfo} dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
                         }
                         Debug.Log(sb.ToString());
+                    }
+                }
+
+                // ========================================================================
+                // Phase 3.5: High-Confidence Pre-Lock (Layered Matching)
+                // Lock exclusive-optimal match pairs BEFORE Hungarian to prevent
+                // global-optimal misassignment where obvious pairs get split apart.
+                // ========================================================================
+                if (matchConfig.preLockEnabled && pendingBinds.Count > 0 && nodeList.Count > 0)
+                {
+                    var preLocked = ApplyHighConfidencePreLock(
+                        pendingBinds,
+                        nodeList,
+                        scoreMatrix,
+                        validMatrix,
+                        matchConfig.preLockThreshold,
+                        matchConfig.preLockColumnUniquenessRatio,
+                        perfectThreshold,
+                        occupiedNodes,
+                        matchedBindings,
+                        logDetail);
+
+                    if (preLocked.Count > 0)
+                    {
+                        // Rebuild pendingBinds and nodeList excluding locked pairs.
+                        // Use descending index order to avoid shifting issues.
+                        var lockedBindIndices = new HashSet<int>(preLocked.Select(p => p.bindIndex));
+                        var lockedNodeIndices = new HashSet<int>(preLocked.Select(p => p.nodeIndex));
+
+                        var remainingBinds = new List<BindingPairViewModel>();
+                        for (int i = 0; i < pendingBinds.Count; i++)
+                        {
+                            if (!lockedBindIndices.Contains(i))
+                                remainingBinds.Add(pendingBinds[i]);
+                        }
+
+                        var remainingNodes = new List<RectTransform>();
+                        for (int j = 0; j < nodeList.Count; j++)
+                        {
+                            if (!lockedNodeIndices.Contains(j))
+                                remainingNodes.Add(nodeList[j]);
+                        }
+
+                        // If everything was locked, skip Hungarian entirely
+                        if (remainingBinds.Count == 0 || remainingNodes.Count == 0)
+                        {
+                            if (logDetail)
+                            {
+                                Debug.Log($"[Match] All {pendingBinds.Count} pairs resolved by pre-lock, skipping Hungarian.");
+                            }
+                            // Early exit — all bindings are already set
+                            int unmatchedFinal = bindings.Count(b => b.unityNode == null);
+                            float unmatchedRateFinal = bindings.Count > 0 ? (float)unmatchedFinal / bindings.Count : 0f;
+                            Debug.Log($"[Match] Unmatched rate: {unmatchedFinal}/{bindings.Count} ({unmatchedRateFinal:P1})");
+                            return;
+                        }
+
+                        // Build remapping tables for score/valid matrix indices
+                        int[] bindRemap = new int[remainingBinds.Count];
+                        int[] nodeRemap = new int[remainingNodes.Count];
+                        int bi = 0, ni = 0;
+                        for (int i = 0; i < pendingBinds.Count; i++)
+                        {
+                            if (!lockedBindIndices.Contains(i)) bindRemap[bi++] = i;
+                        }
+                        for (int j = 0; j < nodeList.Count; j++)
+                        {
+                            if (!lockedNodeIndices.Contains(j)) nodeRemap[ni++] = j;
+                        }
+
+                        // Shrink matrices
+                        float[,] shrunkScore = new float[remainingBinds.Count, remainingNodes.Count];
+                        bool[,] shrunkValid = new bool[remainingBinds.Count, remainingNodes.Count];
+                        maxScore = 0f;
+
+                        for (int i = 0; i < remainingBinds.Count; i++)
+                        {
+                            for (int j = 0; j < remainingNodes.Count; j++)
+                            {
+                                int origI = bindRemap[i];
+                                int origJ = nodeRemap[j];
+                                shrunkScore[i, j] = scoreMatrix[origI, origJ];
+                                shrunkValid[i, j] = validMatrix[origI, origJ];
+                                if (shrunkValid[i, j] && shrunkScore[i, j] > maxScore)
+                                    maxScore = shrunkScore[i, j];
+                            }
+                        }
+
+                        pendingBinds = remainingBinds;
+                        nodeList = remainingNodes;
+                        scoreMatrix = shrunkScore;
+                        validMatrix = shrunkValid;
+
+                        itemCount = pendingBinds.Count;
+                        nodeCount = nodeList.Count;
+
+                        if (logDetail)
+                        {
+                            Debug.Log($"[Match] After pre-lock: {itemCount} pending binds, {nodeCount} candidate nodes remain");
+                        }
                     }
                 }
 
@@ -516,7 +628,8 @@ namespace PSDImporter
         private static float CalculateMatchScoreDetailed(PicData item, RectTransform node, PSDMatchGeometry.PsdGeom psdGeom, RectTransform root, PSDImportConfig config, out ScoreBreakdown breakdown)
         {
             breakdown = new ScoreBreakdown();
-            if (config == null || item == null || node == null || root == null)
+            // PicData is a struct, use default comparison for value type null check
+            if (config == null || item.Equals(default) || node == null || root == null)
             {
                 return 0f;
             }
@@ -576,6 +689,162 @@ namespace PSDImporter
             if (psdType == "Layout") return node.GetComponent<LayoutGroup>() != null;
             if (psdType == "Item") return node.GetComponent<LayoutGroup>() == null && node.GetComponentInParent<LayoutGroup>() != null;
             return false;
+        }
+
+        /// <summary>
+        /// Phase 3.5: High-confidence exclusive-optimal pre-lock.
+        /// Scans the score matrix for rows where the best candidate exceeds threshold AND
+        /// no other row contests the same column (uniqueness check). Locked pairs are
+        /// removed from subsequent Hungarian assignment.
+        /// 
+        /// Algorithm:
+        /// 1. Row scan: find each row's best (max-score) valid candidate
+        /// 2. Threshold filter: only keep rows where bestScore >= threshold
+        /// 3. Column uniqueness: for each candidate, check if any other row scores
+        ///    >= bestScore * columnRatio on the same column. If no contender → lockable.
+        /// 4. Conflict resolution: if multiple rows lock same column, keep highest score.
+        /// </summary>
+        private static List<PreLockedPair> ApplyHighConfidencePreLock(
+            List<BindingPairViewModel> pendingBinds,
+            List<RectTransform> nodeList,
+            float[,] scoreMatrix,
+            bool[,] validMatrix,
+            float threshold,
+            float columnRatio,
+            float perfectThreshold,
+            HashSet<Transform> occupiedNodes,
+            HashSet<BindingPairViewModel> matchedBindings,
+            bool logDetail)
+        {
+            var lockedPairs = new List<PreLockedPair>();
+            int rowCount = pendingBinds.Count;
+
+            if (rowCount == 0 || nodeList.Count == 0)
+                return lockedPairs;
+
+            // --- Step 1: Row scan — find best candidate per row ---
+            float[] rowBestScore = new float[rowCount];
+            int[] rowBestCol = new int[rowCount];
+            bool[] rowPassesThreshold = new bool[rowCount];
+
+            for (int i = 0; i < rowCount; i++)
+            {
+                rowBestScore[i] = -1f;
+                rowBestCol[i] = -1;
+                for (int j = 0; j < nodeList.Count; j++)
+                {
+                    if (validMatrix[i, j] && scoreMatrix[i, j] > rowBestScore[i])
+                    {
+                        rowBestScore[i] = scoreMatrix[i, j];
+                        rowBestCol[i] = j;
+                    }
+                }
+                rowPassesThreshold[i] = rowBestCol[i] >= 0 && rowBestScore[i] >= threshold;
+            }
+
+            // --- Step 2 & 3: Column uniqueness + contention detection ---
+            // For each row that passes threshold, check if any other row is a "contender"
+            // on the same column (scores >= myBest * ratio).
+            bool[] canLock = new bool[rowCount];
+            for (int i = 0; i < rowCount; i++)
+            {
+                if (!rowPassesThreshold[i]) { canLock[i] = false; continue; }
+
+                int col = rowBestCol[i];
+                float myScore = rowBestScore[i];
+                float contendThreshold = myScore * columnRatio;
+                bool hasContender = false;
+
+                for (int k = 0; k < rowCount; k++)
+                {
+                    if (k == i) continue;
+                    if (validMatrix[k, col] && scoreMatrix[k, col] >= contendThreshold)
+                    {
+                        hasContender = true;
+                        break;
+                    }
+                }
+
+                canLock[i] = !hasContender;
+            }
+
+            // --- Step 4: Conflict resolution — if multiple rows target same column, keep highest ---
+            // Track which columns are claimed and by which row (highest score wins)
+            Dictionary<int, int> columnClaimed = new Dictionary<int, int>(); // col -> winning row index
+
+            for (int i = 0; i < rowCount; i++)
+            {
+                if (!canLock[i]) continue;
+
+                int col = rowBestCol[i];
+
+                if (!columnClaimed.ContainsKey(col))
+                {
+                    columnClaimed[col] = i; // first claimant
+                }
+                else
+                {
+                    int existingRow = columnClaimed[col];
+                    if (rowBestScore[i] > rowBestScore[existingRow])
+                    {
+                        // New row has higher score, displace previous claimant
+                        canLock[existingRow] = false;
+                        columnClaimed[col] = i;
+                    }
+                    else
+                    {
+                        // Existing claimant keeps it
+                        canLock[i] = false;
+                    }
+                }
+            }
+
+            // --- Step 5: Execute locks ---
+            for (int i = 0; i < rowCount; i++)
+            {
+                if (!canLock[i]) continue;
+
+                int col = rowBestCol[i];
+                float score = rowBestScore[i];
+                var bind = pendingBinds[i];
+                var node = nodeList[col];
+
+                bool confirmed = score > perfectThreshold;
+                string reason = string.Format("PreLock exclusive_optimal score={0:F0}", score);
+
+                bind.unityNode = node.transform;
+                bind.score = score;
+                bind.isConfirmed = confirmed;
+                bind.statusInfo = reason;
+                bind.isIdMatched = false;
+                matchedBindings.Add(bind);
+                occupiedNodes.Add(node.transform);
+
+                lockedPairs.Add(new PreLockedPair
+                {
+                    bindIndex = i,
+                    nodeIndex = col,
+                    score = score,
+                    isConfirmed = confirmed,
+                    reason = reason
+                });
+
+                if (logDetail)
+                {
+                    Debug.Log(string.Format(
+                        "[Match] PreLock: {0} -> {1} score={2:F1} confirmed={3}",
+                        bind.psdItem.pngName, GetTransformPath(node.transform), score, confirmed));
+                }
+            }
+
+            if (logDetail && lockedPairs.Count > 0)
+            {
+                Debug.Log(string.Format(
+                    "[Match] PreLock summary: {0}/{1} pairs locked, {2} sent to Hungarian",
+                    lockedPairs.Count, rowCount, rowCount - lockedPairs.Count));
+            }
+
+            return lockedPairs;
         }
 
         private static string GetTransformPath(Transform t)

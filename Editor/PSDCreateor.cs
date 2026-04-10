@@ -57,12 +57,62 @@ namespace PSDImporter
             {
                 int d = a.depth.CompareTo(b.depth);
                 if (d != 0) return d;
-                return a.siblingIndex.CompareTo(b.siblingIndex);
+                // 降序：siblingIndex 大的（PS中靠下/底层）后创建 → Hierarchy 靠下 → 后渲染 → 显示在上面 ✅
+                // siblingIndex 小的（PS中靠上/顶层）先创建 → Hierarchy 靠上 → 先渲染 → 被覆盖在底下 ✅
+                return b.siblingIndex.CompareTo(a.siblingIndex);
             });
 
-            // 1) 先按 skeleton 还原完整层级（含中间节点）
+            // =========================================================================
+            // 空节点裁剪：标记"有意义"节点 + 保留祖先链，跳过纯空结构节点
+            // 有意义 = 有视觉输出 / 是布局容器(@H/@V/@G) / 是功能容器(@Btn/@Item)
+            // 同时保留有意义节点的所有祖先（否则层级链断裂）
+            // =========================================================================
+            var keepNode = new HashSet<int>(); // nodeId → 是否保留为 GameObject
+            var nodeById = new Dictionary<int, PsdSkeletonNode>();
+            foreach (var n in orderedNodes) nodeById[n.nodeId] = n;
+
+            // Pass 1: 标记有意义的叶子/容器节点
             foreach (var node in orderedNodes)
             {
+                bool meaningful = false;
+                // 条件1(主要): 有对应的导出资源(PNG/Text)——这是最靠谱的"有用"标志
+                if (!string.IsNullOrEmpty(node.exportAssetRef)) meaningful = true;
+                // 条件2: 是布局容器(@H/@V/@G)
+                else if (node.layoutHint == "Horizontal" || node.layoutHint == "Vertical" || node.layoutHint == "Grid")
+                    meaningful = true;
+                // 条件3: 是功能容器（Button / Item）
+                else if (node.uiTypeHint == "Button" || node.uiTypeHint == "Item")
+                    meaningful = true;
+
+                if (meaningful) keepNode.Add(node.nodeId);
+            }
+
+            // Pass 2: 向上传播 —— 有意义节点的所有祖先也必须保留（保持层级链路）
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var node in orderedNodes)
+                {
+                    if (!keepNode.Contains(node.nodeId)) continue;      // 此节点已确定不保留
+                    if (!node.hasParent || node.parentNodeId <= 0) continue; // 无父节点
+                    if (keepNode.Contains(node.parentNodeId)) continue;   // 父节点已在保留列表
+
+                    keepNode.Add(node.parentNodeId);                     // 祖先也必须保留
+                    changed = true;
+                }
+            }
+
+            // 1) 按骨架还原层级（仅保留有意义节点 + 其祖先）
+            int prunedCount = 0;
+            foreach (var node in orderedNodes)
+            {
+                if (!keepNode.Contains(node.nodeId))
+                {
+                    prunedCount++;
+                    continue; // ← 跳过纯空结构节点
+                }
+
                 Transform parent = rootRectTrans;
                 if (node.hasParent && nodeGoMap.TryGetValue(node.parentNodeId, out var parentGo))
                 {
@@ -79,6 +129,8 @@ namespace PSDImporter
 
                 nodeGoMap[node.nodeId] = nodeRt.gameObject;
             }
+            if (prunedCount > 0)
+                Debug.Log($"<color=yellow>[PSD Create] Skeleton 已裁剪 {prunedCount} 个空节点（仅保留有视觉输出/Layout/Btn/Item 及其祖先）。</color>");
 
             // 2) 再按 assets 刷新视觉/组件到对应节点
             foreach (var item in psdData.listPngData)
@@ -573,11 +625,68 @@ namespace PSDImporter
             // 注意：不要在这里再次 SetSize，因为外面已经 Set 过了
         }
 
+        // --- 文件名回退查找缓存（同一次 Create/Sync 调用内复用，避免重复扫描） ---
+        private static Dictionary<string, string> _filenamePathCache;
+
+        /// <summary>
+        /// 在 assetFolder 下递归搜索与 pngName 匹配的 .png 文件（Unity 项目相对路径）。
+        /// 用于精确路径找不到时的回退：切图和 .ps.data 同目录但名字唯一时可通过文件名匹配。
+        /// </summary>
+        private static string FindPngByFilename(string pngName, string assetFolder)
+        {
+            if (string.IsNullOrEmpty(pngName) || string.IsNullOrEmpty(assetFolder)) return null;
+            // trim: 防 JSX 端残留前后空白（旧 .ps.data 数据兼容）
+            string targetFileName = pngName.Trim() + ".png";
+
+            if (_filenamePathCache == null) _filenamePathCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (_filenamePathCache.TryGetValue(targetFileName, out var cached)) return cached;
+
+            // 扫描范围：assetFolder 及其所有子目录
+            string absFolder = PSDAssetDeduper.GetAbsolutePath(assetFolder);
+            if (!Directory.Exists(absFolder))
+            {
+                _filenamePathCache[targetFileName] = null;
+                return null;
+            }
+
+            try
+            {
+                var files = Directory.GetFiles(absFolder, targetFileName, SearchOption.AllDirectories);
+                foreach (var f in files)
+                {
+                    // 将绝对路径转回 Unity 相对路径
+                    string relative = f.Replace("\\", "/");
+                    int idx = relative.IndexOf("Assets/", StringComparison.OrdinalIgnoreCase);
+                    if (idx >= 0)
+                    {
+                        relative = relative.Substring(idx);
+                        _filenamePathCache[targetFileName] = relative;
+                        return relative;
+                    }
+                }
+            }
+            catch (System.Exception) { /* 权限等问题静默忽略 */ }
+
+            _filenamePathCache[targetFileName] = null;
+            return null;
+        }
+
+        private static void LoadSpriteFromPath(UnityEngine.UI.Image img, PicData item, string resolvedPath, bool hasSlice, Vector4 sliceBorder, PSDImportConfig config)
+        {
+            Sprite sp = AssetDatabase.LoadAssetAtPath<Sprite>(resolvedPath);
+            if (sp != null)
+            {
+                img.sprite = sp;
+                if (hasSlice) img.type = Image.Type.Sliced;
+                img.color = Color.white; // 颜色清洗
+            }
+        }
+
         public static void SetupImage(UnityEngine.UI.Image img, PicData item, string assetFolder, PSDImportConfig config)
         {
             string group = item.groupName == "root/" ? "/" : item.groupName;
             string folder = assetFolder.Replace("\\", "/");
-            string pngpath = $"{folder}{group}{item.pngName}.png".Replace("//", "/");
+            string pngpath = $"{folder}{group}{item.pngName}".Replace("//", "/");
 
             if (config != null && config.commonSpriteMatch && IsCommonTagged(item))
             {
@@ -598,16 +707,21 @@ namespace PSDImporter
                 assetFolder);
             string resolvedAbs = PSDAssetDeduper.GetAbsolutePath(resolvedPath);
 
+            bool hasSlice = item.hasSlice;
+            Vector4 sliceBorder = item.sliceBorder;
+
+            if (item.pngName.IndexOf("@Bg", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                hasSlice = false;
+            }
+            else if (!hasSlice && config != null && config.autoSlice)
+            {
+                // autoSlice 需要在最终确定路径后检测
+            }
+
             if (File.Exists(resolvedAbs))
             {
-                bool hasSlice = item.hasSlice;
-                Vector4 sliceBorder = item.sliceBorder;
-
-                if (item.pngName.IndexOf("@Bg", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    hasSlice = false;
-                }
-                else if (!hasSlice && config != null && config.autoSlice)
+                if (!hasSlice && config != null && config.autoSlice)
                 {
                     if (PSDNineSliceUtility.TryDetectBorder(resolvedAbs, out var detectedBorder))
                     {
@@ -619,19 +733,30 @@ namespace PSDImporter
                 {
                     FixSpriteImport(resolvedPath, sliceBorder);
                 }
-                Sprite sp = AssetDatabase.LoadAssetAtPath<Sprite>(resolvedPath);
-                if (sp != null)
-                {
-                    img.sprite = sp;
-                    if (hasSlice) img.type = Image.Type.Sliced;
-                    img.color = Color.white; // 颜色清洗
-                }
+                LoadSpriteFromPath(img, item, resolvedPath, hasSlice, sliceBorder, config);
             }
             else
             {
-                // 如果找不到图，不要变红，可能是纯容器，保持透明或白色
-                //img.color = new Color(1, 0, 0, 0.5f);
-                OnPicMissing?.Invoke(img.gameObject, pngpath);
+                // 回退：按文件名在资产目录递归查找（切图和 .ps.data 同级目录场景）
+                string fallbackPath = FindPngByFilename(item.pngName, assetFolder);
+                if (!string.IsNullOrEmpty(fallbackPath))
+                {
+                    if (!hasSlice && config != null && config.autoSlice)
+                    {
+                        string fallbackAbs = PSDAssetDeduper.GetAbsolutePath(fallbackPath);
+                        if (File.Exists(fallbackAbs) && PSDNineSliceUtility.TryDetectBorder(fallbackAbs, out var fbBorder))
+                        {
+                            hasSlice = true;
+                            sliceBorder = fbBorder;
+                        }
+                    }
+                    if (hasSlice) FixSpriteImport(fallbackPath, sliceBorder);
+                    LoadSpriteFromPath(img, item, fallbackPath, hasSlice, sliceBorder, config);
+                }
+                else
+                {
+                    OnPicMissing?.Invoke(img.gameObject, pngpath);
+                }
             }
         }
 
@@ -655,6 +780,20 @@ namespace PSDImporter
                 {
                     raw.texture = tex;
                     raw.color = Color.white;
+                }
+            }
+            else
+            {
+                // 回退：按文件名查找
+                string fallbackPath = FindPngByFilename(item.pngName, assetFolder);
+                if (!string.IsNullOrEmpty(fallbackPath))
+                {
+                    var tex = AssetDatabase.LoadAssetAtPath<Texture>(fallbackPath);
+                    if (tex != null)
+                    {
+                        raw.texture = tex;
+                        raw.color = Color.white;
+                    }
                 }
             }
         }
