@@ -270,18 +270,40 @@ namespace PSDImporter
                 // A. 收集 PSD 里属于该 Layout 的子数据 (用于计算 Padding/Spacing)
                 List<PicData> layoutChildren = new List<PicData>();
 
-                // 简单粗暴：遍历 PSD 数据，找到几何中心位于当前 Layout 范围内的项
-                foreach (var other in psdData.listPngData)
+                if (psdData.HasSkeleton)
                 {
-                    if (other.id == item.id) continue;
-                    // 只认 @Item, @Image, @Button 作为子元素
-                    if (other.uiType == "Item" || other.uiType == "Image" || other.uiType == "Button")
+                    // Skeleton 模式：用 parentNodeId 层级关系查找直接子节点（精确，不依赖几何包含）
+                    int layoutNodeId = item.id;
+                    foreach (var skelNode in psdData.skeleton)
                     {
-                        bool insideX = other.x >= (item.x - item.width / 2) && other.x <= (item.x + item.width / 2);
-                        bool insideY = other.y >= (item.y - item.height / 2) && other.y <= (item.y + item.height / 2);
-                        if (insideX && insideY)
+                        if (skelNode.parentNodeId != layoutNodeId) continue;
+                        // 只认有视觉输出的子节点（@Item/@Image/@Button 或有 exportAssetRef）
+                        bool isLayoutChild = !string.IsNullOrEmpty(skelNode.exportAssetRef) ||
+                                             skelNode.uiTypeHint == "Item" ||
+                                             skelNode.uiTypeHint == "Image" ||
+                                             skelNode.uiTypeHint == "Button";
+                        if (!isLayoutChild) continue;
+
+                        // 找到对应的 listPngData 项
+                        var picData = psdData.listPngData.FirstOrDefault(p => p.id == skelNode.nodeId);
+                        if (picData != null)
+                            layoutChildren.Add(picData);
+                    }
+                }
+                else
+                {
+                    // 兼容模式（无 Skeleton）：仍用几何包含判断
+                    foreach (var other in psdData.listPngData)
+                    {
+                        if (other.id == item.id) continue;
+                        if (other.uiType == "Item" || other.uiType == "Image" || other.uiType == "Button")
                         {
-                            layoutChildren.Add(other);
+                            bool insideX = other.x >= (item.x - item.width / 2) && other.x <= (item.x + item.width / 2);
+                            bool insideY = other.y >= (item.y - item.height / 2) && other.y <= (item.y + item.height / 2);
+                            if (insideX && insideY)
+                            {
+                                layoutChildren.Add(other);
+                            }
                         }
                     }
                 }
