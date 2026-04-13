@@ -509,6 +509,12 @@ namespace PSDImporter
                 int unmatchedCount = bindings.Count(b => b.unityNode == null);
                 float unmatchedRate = bindings.Count > 0 ? (float)unmatchedCount / bindings.Count : 0f;
                 Debug.Log($"[Match] Unmatched rate: {unmatchedCount}/{bindings.Count} ({unmatchedRate:P1})");
+
+                // Export detailed match log to JSON when showDetailedLog is enabled
+                if (logDetail)
+                {
+                    PSDMatchLogExporter.Export(bindings, targetRoot, cachedPsdData, matchConfig);
+                }
             }
             finally
             {

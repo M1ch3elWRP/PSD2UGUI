@@ -35,9 +35,13 @@ MonoBehaviour:
   horizontalLayoutComponent: {fileID: 0}
   verticalLayoutComponent: {fileID: 0}
   gridLayoutComponent: {fileID: 0}
-  skipInactiveMatch: 0
+  skipInactiveMatch: 1
   allowUnmatched: 1
   unmatchedPenalty: 120
   minAcceptScore: 1
-  forceCandidateLog: 0
+  preLockEnabled: 1
+  preLockThreshold: 200
+  preLockColumnUniquenessRatio: 0.85
+  forceCandidateLog: 1
+  logMatchGeometry: 1
   mlConfig: {fileID: 11400000, guid: f513ffef5b434985bd1f2fc8403c2e46, type: 2}
