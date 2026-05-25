@@ -239,6 +239,12 @@ namespace PSDImporter
         {
             try
             {
+                var visualHash = ComputeVisualHash(filePath);
+                if (!string.IsNullOrEmpty(visualHash))
+                {
+                    return "VIS:" + visualHash;
+                }
+
                 using (var stream = File.OpenRead(filePath))
                 using (var md5 = MD5.Create())
                 {
@@ -250,6 +256,106 @@ namespace PSDImporter
             {
                 Debug.LogWarning($"[PSDAssetDeduper] Hash failed: {filePath} ({ex.Message})");
                 return null;
+            }
+        }
+
+        private static string ComputeVisualHash(string filePath)
+        {
+            Texture2D tex = null;
+            try
+            {
+                string ext = Path.GetExtension(filePath);
+                if (!string.Equals(ext, ".png", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(ext, ".jpg", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(ext, ".jpeg", StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                var bytes = File.ReadAllBytes(filePath);
+                tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!tex.LoadImage(bytes)) return null;
+
+                var pixels = tex.GetPixels32();
+                int width = tex.width;
+                int height = tex.height;
+                if (!TryTrimTransparent(pixels, width, height, out var trimmed, out var trimW, out var trimH))
+                {
+                    trimmed = pixels;
+                    trimW = width;
+                    trimH = height;
+                }
+
+                return ComputePixelHash(trimmed, trimW, trimH);
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
+            }
+        }
+
+        private static bool TryTrimTransparent(Color32[] pixels, int width, int height, out Color32[] trimmed, out int trimW, out int trimH)
+        {
+            trimmed = null;
+            trimW = 0;
+            trimH = 0;
+            if (pixels == null || pixels.Length != width * height || width <= 0 || height <= 0) return false;
+
+            int minX = width;
+            int minY = height;
+            int maxX = -1;
+            int maxY = -1;
+            for (int y = 0; y < height; y++)
+            {
+                int row = y * width;
+                for (int x = 0; x < width; x++)
+                {
+                    if (pixels[row + x].a <= 0) continue;
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+
+            if (maxX < minX || maxY < minY) return false;
+            if (minX == 0 && minY == 0 && maxX == width - 1 && maxY == height - 1) return false;
+
+            trimW = maxX - minX + 1;
+            trimH = maxY - minY + 1;
+            trimmed = new Color32[trimW * trimH];
+            for (int y = 0; y < trimH; y++)
+            {
+                Array.Copy(pixels, (minY + y) * width + minX, trimmed, y * trimW, trimW);
+            }
+            return true;
+        }
+
+        private static string ComputePixelHash(Color32[] pixels, int width, int height)
+        {
+            if (pixels == null || pixels.Length == 0 || width <= 0 || height <= 0) return null;
+            var byteCount = pixels.Length * 4 + 8;
+            var buffer = new byte[byteCount];
+            Buffer.BlockCopy(BitConverter.GetBytes(width), 0, buffer, 0, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(height), 0, buffer, 4, 4);
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                int offset = 8 + i * 4;
+                var c = pixels[i];
+                buffer[offset] = c.r;
+                buffer[offset + 1] = c.g;
+                buffer[offset + 2] = c.b;
+                buffer[offset + 3] = c.a;
+            }
+
+            using (var md5 = MD5.Create())
+            {
+                var hash = md5.ComputeHash(buffer);
+                return BitConverter.ToString(hash).Replace("-", "");
             }
         }
     }

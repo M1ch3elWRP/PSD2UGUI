@@ -1,16 +1,46 @@
 param(
     [string]$Source = "$PSScriptRoot\ExportToPNG.jsx",
-    [string]$Destination = "C:\Program Files\Adobe\Adobe Photoshop 2026\Presets\Scripts\ExportToPNG.jsx",
+    [string[]]$Destination,
     [switch]$Watch
 )
 
-function Sync-Once {
-    $destDir = Split-Path -Parent $Destination
-    if (!(Test-Path $destDir)) {
-        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+function Get-DefaultDestinations {
+    $adobeRoot = "C:\Program Files\Adobe"
+    if (!(Test-Path $adobeRoot)) {
+        return @()
     }
-    Copy-Item -Path $Source -Destination $Destination -Force
-    Write-Host ("Synced: {0} -> {1}" -f $Source, $Destination)
+
+    $destinations = Get-ChildItem -Path $adobeRoot -Directory -Filter "Adobe Photoshop *" -ErrorAction SilentlyContinue |
+        Sort-Object Name |
+        ForEach-Object { Join-Path $_.FullName "Presets\Scripts\ExportToPNG.jsx" }
+
+    return @($destinations)
+}
+
+function Resolve-Destinations {
+    if ($Destination -and $Destination.Count -gt 0) {
+        return @($Destination)
+    }
+
+    $auto = Get-DefaultDestinations
+    if ($auto.Count -eq 0) {
+        throw "No Photoshop installation found under C:\Program Files\Adobe"
+    }
+
+    return $auto
+}
+
+function Sync-Once {
+    $destinations = Resolve-Destinations
+    foreach ($dest in $destinations) {
+        $destDir = Split-Path -Parent $dest
+        if (!(Test-Path $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        }
+
+        Copy-Item -Path $Source -Destination $dest -Force
+        Write-Host ("Synced: {0} -> {1}" -f $Source, $dest)
+    }
 }
 
 Sync-Once

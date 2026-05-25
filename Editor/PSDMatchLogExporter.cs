@@ -4,7 +4,6 @@ using System.IO;
 using System.Text;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace PSDImporter
 {
@@ -38,12 +37,33 @@ namespace PSDImporter
             public float weightPosition;
             public float weightSize;
             public float weightType;
+            public float weightDepth;
+            public float weightAnchor;
+            public bool enableIdHistoryMatch;
             public bool skipInactiveMatch;
             public bool allowUnmatched;
             public float unmatchedPenalty;
             public float minAcceptScore;
+            public bool enableGeometryReject;
+            public float geometryRejectDistanceMultiplier;
+            public float geometryRejectSizeRatio;
+            public bool enableCandidatePruning;
+            public float candidateDistanceMultiplier;
+            public float hierarchyDescendantAffinityBonus;
+            public float hierarchyOutsideParentPenalty;
             public bool preLockEnabled;
             public float preLockThreshold;
+            public bool preLockUseDynamicThreshold;
+            public float preLockDynamicRatio;
+            public float preLockDynamicMinThreshold;
+            public float preLockMinScoreGap;
+            public float lowConfidenceMargin;
+            public bool autoSlice;
+            public bool dedupeSprites;
+            public bool commonSpriteMatch;
+            public string commonSpriteMatchMode;
+            public string[] commonSpriteFolders;
+            public string[] commonSpriteWhiteFolders;
         }
 
         [Serializable]
@@ -53,6 +73,18 @@ namespace PSDImporter
             public int id;
             public string uiType;
             public GeometryLog psdGeometry;
+            public float bestCandidateScore;
+            public float secondBestCandidateScore;
+            public float scoreMargin;
+            public bool isLowConfidence;
+            public int skippedTypeCandidates;
+            public int skippedSpatialCandidates;
+            public int hierarchyPenalizedCandidates;
+            public bool idHistoryRejected;
+            public string idHistoryRejectedPath;
+            public string idHistoryRejectReason;
+            public string stdPrefabFailureReason;
+            public List<StdPrefabCandidateViewModel> stdPrefabCandidates = new List<StdPrefabCandidateViewModel>();
             public List<CandidateLog> candidates = new List<CandidateLog>();
             public FinalMatchLog finalMatch;
         }
@@ -69,6 +101,7 @@ namespace PSDImporter
             public float rectMaxX;
             public float rectMaxY;
             public int depth;
+            public string source;
         }
 
         [Serializable]
@@ -83,9 +116,13 @@ namespace PSDImporter
             public float scorePos;
             public float scoreSize;
             public float scoreType;
+            public float scoreDepth;
+            public float scoreAnchor;
             public float weightedPos;
             public float weightedSize;
             public float weightedType;
+            public float weightedDepth;
+            public float weightedAnchor;
             public float totalScore;
         }
 
@@ -95,6 +132,8 @@ namespace PSDImporter
             public string matchMethod;   // "ID_History" | "PreLock" | "Hungarian" | "Unmatched"
             public string nodePath;
             public float score;
+            public float scoreMargin;
+            public bool isLowConfidence;
             public string statusInfo;
             public GeometryLog nodeGeometry;  // null if unmatched
         }
@@ -105,6 +144,7 @@ namespace PSDImporter
             public int totalLayers;
             public int matched;
             public int unmatched;
+            public int pendingInstantiate;
             public float unmatchedRate;
         }
 
@@ -131,6 +171,7 @@ namespace PSDImporter
 
             int matched = 0;
             int unmatched = 0;
+            int pendingInstantiate = 0;
 
             for (int i = 0; i < bindings.Count; i++)
             {
@@ -139,9 +180,18 @@ namespace PSDImporter
                 root.layers.Add(layer);
 
                 if (bind.unityNode != null)
+                {
                     matched++;
+                }
+                else if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending)
+                {
+                    matched++;
+                    pendingInstantiate++;
+                }
                 else
+                {
                     unmatched++;
+                }
             }
 
             root.summary = new SummaryLog
@@ -149,6 +199,7 @@ namespace PSDImporter
                 totalLayers = bindings.Count,
                 matched = matched,
                 unmatched = unmatched,
+                pendingInstantiate = pendingInstantiate,
                 unmatchedRate = bindings.Count > 0 ? (float)unmatched / bindings.Count : 0f
             };
 
@@ -188,12 +239,33 @@ namespace PSDImporter
                     weightPosition = config.weightPosition,
                     weightSize = config.weightSize,
                     weightType = config.weightType,
+                    weightDepth = config.weightDepth,
+                    weightAnchor = config.weightAnchor,
+                    enableIdHistoryMatch = config.enableIdHistoryMatch,
                     skipInactiveMatch = config.skipInactiveMatch,
                     allowUnmatched = config.allowUnmatched,
                     unmatchedPenalty = config.unmatchedPenalty,
                     minAcceptScore = config.minAcceptScore,
+                    enableGeometryReject = config.enableGeometryReject,
+                    geometryRejectDistanceMultiplier = config.geometryRejectDistanceMultiplier,
+                    geometryRejectSizeRatio = config.geometryRejectSizeRatio,
+                    enableCandidatePruning = config.enableCandidatePruning,
+                    candidateDistanceMultiplier = config.candidateDistanceMultiplier,
+                    hierarchyDescendantAffinityBonus = config.hierarchyDescendantAffinityBonus,
+                    hierarchyOutsideParentPenalty = config.hierarchyOutsideParentPenalty,
                     preLockEnabled = config.preLockEnabled,
-                    preLockThreshold = config.preLockThreshold
+                    preLockThreshold = config.preLockThreshold,
+                    preLockUseDynamicThreshold = config.preLockUseDynamicThreshold,
+                    preLockDynamicRatio = config.preLockDynamicRatio,
+                    preLockDynamicMinThreshold = config.preLockDynamicMinThreshold,
+                    preLockMinScoreGap = config.preLockMinScoreGap,
+                    lowConfidenceMargin = config.lowConfidenceMargin,
+                    autoSlice = config.autoSlice,
+                    dedupeSprites = config.dedupeSprites,
+                    commonSpriteMatch = config.commonSpriteMatch,
+                    commonSpriteMatchMode = config.commonSpriteMatchMode.ToString(),
+                    commonSpriteFolders = config.commonSpriteFolders,
+                    commonSpriteWhiteFolders = config.commonSpriteWhiteFolders
                 }
             };
         }
@@ -212,7 +284,21 @@ namespace PSDImporter
                 id = bind.psdItem.id,
                 uiType = bind.psdItem.uiType,
                 psdGeometry = ToGeometryLog(psdGeom.centerLocal, psdGeom.sizeLocal,
-                    psdGeom.rectMinLocal, psdGeom.rectMaxLocal, psdGeom.depth)
+                    psdGeom.rectMinLocal, psdGeom.rectMaxLocal, psdGeom.depth),
+                bestCandidateScore = bind.bestCandidateScore,
+                secondBestCandidateScore = bind.secondBestCandidateScore,
+                scoreMargin = bind.scoreMargin,
+                isLowConfidence = bind.isLowConfidence,
+                skippedTypeCandidates = bind.skippedTypeCandidates,
+                skippedSpatialCandidates = bind.skippedSpatialCandidates,
+                hierarchyPenalizedCandidates = bind.hierarchyPenalizedCandidates,
+                idHistoryRejected = bind.idHistoryRejected,
+                idHistoryRejectedPath = bind.idHistoryRejectedPath,
+                idHistoryRejectReason = bind.idHistoryRejectReason,
+                stdPrefabFailureReason = bind.stdPrefabFailureReason,
+                stdPrefabCandidates = bind.stdPrefabCandidates != null
+                    ? new List<StdPrefabCandidateViewModel>(bind.stdPrefabCandidates)
+                    : new List<StdPrefabCandidateViewModel>()
             };
 
             // Collect all candidate nodes from the prefab and score them
@@ -225,15 +311,18 @@ namespace PSDImporter
                 if (node == rootRect.transform)
                     continue;
 
-                // Type filter (same logic as VisualBindingRestoreService.IsTypeMatch)
-                if (!IsTypeMatchForLog(node, bind.psdItem.uiType))
+                if (PSDMatchNodeFilter.ShouldSkipInactiveMatch(node, rootRect, config))
+                    continue;
+
+                // Type filter (same logic as VisualBindingRestoreService.GetTypeMatchScore)
+                float typeScoreForLog = PSDMatchTypeUtility.GetTypeMatchScore(node, bind.psdItem, config.typeCompatScore);
+                if (typeScoreForLog <= 0f)
                     continue;
 
                 // Calculate score using the same pipeline
                 var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(node, rootRect);
-                bool typeMatch = IsTypeMatchForLog(node, bind.psdItem.uiType);
                 var scoreBreakdown = PSDMatchScoring.Evaluate(
-                    PSDMatchScoring.ScoringInput.FromConfig(nodeGeom, psdGeom, typeMatch, config));
+                    PSDMatchScoring.ScoringInput.FromConfig(nodeGeom, psdGeom, typeScoreForLog, config));
 
                 if (scoreBreakdown.total > 1f)
                 {
@@ -242,16 +331,20 @@ namespace PSDImporter
                         nodePath = GetTransformPath(node),
                         active = node.gameObject.activeInHierarchy,
                         nodeGeometry = ToGeometryLog(nodeGeom.centerLocal, nodeGeom.sizeLocal,
-                            nodeGeom.rectMinLocal, nodeGeom.rectMaxLocal, nodeGeom.depth),
+                            nodeGeom.rectMinLocal, nodeGeom.rectMaxLocal, nodeGeom.depth, nodeGeom.geometrySource),
                         distance = scoreBreakdown.geometry.distance,
                         diffW = scoreBreakdown.geometry.diffW,
                         diffH = scoreBreakdown.geometry.diffH,
                         scorePos = scoreBreakdown.scorePos,
                         scoreSize = scoreBreakdown.scoreSize,
                         scoreType = scoreBreakdown.scoreType,
+                        scoreDepth = scoreBreakdown.scoreDepth,
+                        scoreAnchor = scoreBreakdown.scoreAnchor,
                         weightedPos = scoreBreakdown.weightedPos,
                         weightedSize = scoreBreakdown.weightedSize,
                         weightedType = scoreBreakdown.weightedType,
+                        weightedDepth = scoreBreakdown.weightedDepth,
+                        weightedAnchor = scoreBreakdown.weightedAnchor,
                         totalScore = scoreBreakdown.total
                     });
                 }
@@ -269,7 +362,8 @@ namespace PSDImporter
             if (bind.unityNode != null)
             {
                 string method = bind.isIdMatched ? "ID_History"
-                    : bind.statusInfo != null && bind.statusInfo.StartsWith("PreLock") ? "PreLock"
+                    : bind.isPreLocked ? "PreLock"
+                    : bind.stdPrefabMode == StdPrefabApplyMode.ReuseExisting ? "StdPrefabReuse"
                     : "Hungarian";
 
                 var matchNode = bind.unityNode.GetComponent<RectTransform>();
@@ -278,7 +372,7 @@ namespace PSDImporter
                 {
                     var ng = PSDMatchGeometry.ExtractNodeGeom(matchNode, rootRect);
                     matchGeom = ToGeometryLog(ng.centerLocal, ng.sizeLocal,
-                        ng.rectMinLocal, ng.rectMaxLocal, ng.depth);
+                        ng.rectMinLocal, ng.rectMaxLocal, ng.depth, ng.geometrySource);
                 }
 
                 layer.finalMatch = new FinalMatchLog
@@ -286,8 +380,23 @@ namespace PSDImporter
                     matchMethod = method,
                     nodePath = GetTransformPath(bind.unityNode),
                     score = bind.score,
+                    scoreMargin = bind.scoreMargin,
+                    isLowConfidence = bind.isLowConfidence,
                     statusInfo = bind.statusInfo,
                     nodeGeometry = matchGeom
+                };
+            }
+            else if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending)
+            {
+                layer.finalMatch = new FinalMatchLog
+                {
+                    matchMethod = "StdPrefabPending",
+                    nodePath = bind.stdPrefabAssetPath,
+                    score = bind.score,
+                    scoreMargin = bind.scoreMargin,
+                    isLowConfidence = bind.isLowConfidence,
+                    statusInfo = bind.statusInfo,
+                    nodeGeometry = null
                 };
             }
             else
@@ -297,6 +406,8 @@ namespace PSDImporter
                     matchMethod = "Unmatched",
                     nodePath = null,
                     score = 0f,
+                    scoreMargin = bind.scoreMargin,
+                    isLowConfidence = bind.isLowConfidence,
                     statusInfo = bind.statusInfo,
                     nodeGeometry = null
                 };
@@ -306,7 +417,7 @@ namespace PSDImporter
         }
 
         private static GeometryLog ToGeometryLog(
-            Vector2 center, Vector2 size, Vector2 min, Vector2 max, int depth)
+            Vector2 center, Vector2 size, Vector2 min, Vector2 max, int depth, string source = null)
         {
             return new GeometryLog
             {
@@ -318,7 +429,8 @@ namespace PSDImporter
                 rectMinY = Mathf.Round(min.y * 10f) / 10f,
                 rectMaxX = Mathf.Round(max.x * 10f) / 10f,
                 rectMaxY = Mathf.Round(max.y * 10f) / 10f,
-                depth = depth
+                depth = depth,
+                source = source
             };
         }
 
@@ -334,17 +446,6 @@ namespace PSDImporter
             }
             parts.Reverse();
             return string.Join("/", parts);
-        }
-
-        private static bool IsTypeMatchForLog(Transform node, string psdType)
-        {
-            if (psdType == "Button") return node.GetComponent<Button>() != null;
-            if (psdType == "Text") return node.GetComponent<Text>() != null;
-            if (psdType == "RawImage") return node.GetComponent<RawImage>() != null;
-            if (psdType == "Image") return node.GetComponent<Image>() != null && node.GetComponent<Button>() == null;
-            if (psdType == "Layout") return node.GetComponent<LayoutGroup>() != null;
-            if (psdType == "Item") return node.GetComponent<LayoutGroup>() == null && node.GetComponentInParent<LayoutGroup>() != null;
-            return false;
         }
 
         private static void WriteJsonFile(MatchLogRoot root, PSDData psdData)

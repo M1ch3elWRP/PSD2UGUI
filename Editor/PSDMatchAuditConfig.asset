@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6ffd229774fed50438ef09767902ff88, type: 3}
+  m_Name: PSDMatchAuditConfig
+  m_EditorClassIdentifier: 
+  psdDataAsset: {fileID: 102900000, guid: ba92cefa96b3f574fb69cbe915a33f6f, type: 3}
+  psdDataPath: 
+  targetRoot: {fileID: 1794332908293136, guid: 9cb35ce2e3732e948bfccf65b6afda56, type: 3}
+  targetRootPath: 
+  importConfig: {fileID: 11400000, guid: d49e80649ac36ab4db42358bee16811d, type: 2}
+  runMode: 0
+  maxTopCandidates: 5
+  maxSuspects: 50
+  captureScale: 1
+  outputFolder: Assets/_OpenCode/TZUI/PS/PSDTools/Log/Audit

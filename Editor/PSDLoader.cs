@@ -29,6 +29,20 @@ namespace PSDImporter
         public string textContent;
         public float fontSize;
         public Color fontColor;
+        public float textOpacity;   // PS图层不透明度 0~100
+        public float lineSpacing;   // 行间距(px)，-1表示未设置（使用默认）
+        public string textAlign;    // 对齐方式: "left", "center", "right"
+
+        // 文本描边 (frameFX)
+        public bool hasStroke;
+        public Color strokeColor;
+        public float strokeSize;     // 描边宽度(px)
+
+        // 文本渐变 (gradientFill)
+        public bool hasGradient;
+        public Color gradientTopColor;
+        public Color gradientBottomColor;
+        public bool gradientVertical; // true=上下渐变，false=左右渐变
 
         // å›¾ç‰‡ä¹å®«æ ¼
         public bool hasSlice;
@@ -38,12 +52,48 @@ namespace PSDImporter
 
         // 解析后的辅助属性
         public string cleanName; // 去除后缀后的名字 (用于Unity节点命名)
-        public string uiType;    // 类型: "Button", "Image", "RawImage", "Text"
+        public string uiType;    // 类型: "Button", "Image", "Text"
+
+        // 父子关系（用于 Restore 匹配时的父级亲和力评分）
+        public bool hasParent;
+        public int parentNodeId;
+        public string stdPrefabKind;
+        public string stdPrefabVariant;
+        public bool isStdPrefabRoot;
+        public bool excludeFromRestore;
+        public int stdPrefabRootId;
+        public List<StdPrefabTextData> stdTextItems;
+        public bool isScrollContentAlias;
+        public int scrollRectRootId;
+    }
+
+    [Serializable]
+    public struct StdPrefabTextData
+    {
+        public int sourceNodeId;
+        public string name;
+        public string textContent;
+        public float fontSize;
+        public Color fontColor;
+        public float textOpacity;
+        public float lineSpacing;
+        public string textAlign;
+        public bool hasStroke;
+        public Color strokeColor;
+        public float strokeSize;
+        public float width;
+        public float height;
+        public float localCenterX;
+        public float localCenterY;
+        public float normalizedCenterX;
+        public float normalizedCenterY;
     }
 
     [Serializable]
     public class PSDData
     {
+        public string templatePngPath;
+        public bool hasTemplatePng;
         public string psdAssetsFolder; // 图片资源所在文件夹
         public int width;              // 画布宽
         public int height;             // 画布高
@@ -132,15 +182,18 @@ namespace PSDImporter
             if (!jsonPath.EndsWith(exname)) return null;
 
             PSDData psdData = new PSDData();
-            psdData.psdAssetsFolder = Path.GetDirectoryName(jsonPath);
+            psdData.psdAssetsFolder = (Path.GetDirectoryName(jsonPath) ?? string.Empty).Replace("\\", "/");
 
             string jsonText = File.ReadAllText(jsonPath);
             jsonText = NormalizePsDataFormat(jsonText);
             var jsonJo = JObject.Parse(jsonText);
+            JObject meta = jsonJo["meta"] as JObject;
 
             JObject jopxdata = (JObject)jsonJo["canvas"];
             psdData.width = (int)jopxdata["width"];
             psdData.height = (int)jopxdata["height"];
+            psdData.templatePngPath = ResolveTemplatePngPath(psdData.psdAssetsFolder, meta);
+            psdData.hasTemplatePng = !string.IsNullOrEmpty(psdData.templatePngPath);
 
             JObject jp = jsonJo["pngdata"] as JObject;
             JArray assets = jsonJo["assets"] as JArray;
@@ -174,7 +227,76 @@ namespace PSDImporter
 
             // 排序 (Index倒序 -> 渲染顺序正序)
             psdData.listPngData.Sort((a, b) => a.index.CompareTo(b.index));
+            PostProcessScrollRectFlags(psdData);
+            PostProcessStdPrefabFlags(psdData);
             return psdData;
+        }
+
+        private static string ResolveTemplatePngPath(string psdAssetsFolder, JObject meta)
+        {
+            string templatePath = null;
+            if (meta != null)
+            {
+                templatePath = (string)meta["templatePngPath"] ?? (string)meta["templatePng"];
+            }
+
+            string resolved = ResolveTemplateCandidate(psdAssetsFolder, templatePath);
+            if (!string.IsNullOrEmpty(resolved))
+            {
+                return resolved;
+            }
+
+            return ResolveTemplateCandidate(psdAssetsFolder, "template.png");
+        }
+
+        private static string ResolveTemplateCandidate(string psdAssetsFolder, string templatePath)
+        {
+            if (string.IsNullOrEmpty(templatePath))
+            {
+                return string.Empty;
+            }
+
+            string normalized = templatePath.Replace("\\", "/");
+            string candidate = Path.IsPathRooted(normalized)
+                ? normalized
+                : $"{(psdAssetsFolder ?? string.Empty).TrimEnd('/', '\\')}/{normalized}";
+            candidate = NormalizeUnityAssetPath(candidate);
+            return AssetOrAbsoluteFileExists(candidate) ? candidate : string.Empty;
+        }
+
+        private static bool AssetOrAbsoluteFileExists(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return false;
+            }
+
+            if (File.Exists(path))
+            {
+                return true;
+            }
+
+            string normalized = path.Replace("\\", "/");
+            if (normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+            {
+                string projectRoot = Directory.GetParent(Application.dataPath).FullName.Replace("\\", "/");
+                string absolute = Path.Combine(projectRoot, normalized).Replace("\\", "/");
+                return File.Exists(absolute);
+            }
+
+            return false;
+        }
+
+        private static string NormalizeUnityAssetPath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return path;
+            }
+
+            string normalized = path.Replace("\\", "/");
+            int assetsIndex = normalized.IndexOf("Assets/", StringComparison.OrdinalIgnoreCase);
+            return assetsIndex >= 0 ? normalized.Substring(assetsIndex) : normalized;
         }
 
         private static PicData ParsePicData(string groupName, JObject jodata, int canvasHeight)
@@ -186,6 +308,18 @@ namespace PSDImporter
             // 解析 ID (确保 JS 脚本导出了 id 字段)
             if (jodata["id"] != null) data.id = (int)jodata["id"];
             else data.id = StableHash32(data.pngName); // 兜底：稳定哈希
+
+            // 解析父子关系
+            data.parentNodeId = (int?)jodata["parentNodeId"] ?? 0;
+            data.hasParent = data.parentNodeId > 0;
+            data.stdPrefabKind = string.Empty;
+            data.stdPrefabVariant = string.Empty;
+            data.isStdPrefabRoot = false;
+            data.excludeFromRestore = false;
+            data.stdPrefabRootId = 0;
+            data.stdTextItems = ParseStdPrefabTextItems(jodata["stdTextItems"]);
+            data.isScrollContentAlias = false;
+            data.scrollRectRootId = 0;
 
             data.index = (int)jodata["index"];
             data.x = (float)jodata["x"];
@@ -216,6 +350,9 @@ namespace PSDImporter
             string jsonUiType = (string)jodata["uiType"]; // 读取 JSX 写入的类型
 
             // 默认值初始化
+            string jsonStdPrefabKind = (string)jodata["stdPrefabKind"];
+            string jsonStdPrefabVariant = (string)jodata["stdPrefabVariant"];
+
             data.uiType = "Image";
             data.layoutType = "None";
 
@@ -227,6 +364,27 @@ namespace PSDImporter
                 data.fontSize = (float)jodata["fontSize"];
                 string hexColor = (string)jodata["fontColor"];
                 ColorUtility.TryParseHtmlString(hexColor, out data.fontColor);
+                data.textOpacity = jodata["opacity"] != null ? (float)jodata["opacity"] : 100f;
+                data.lineSpacing = jodata["lineSpacing"] != null ? (float)jodata["lineSpacing"] : -1f;
+                data.textAlign = jodata["textAlign"] != null ? (string)jodata["textAlign"] : "center";
+
+                // 描边
+                data.hasStroke = jodata["hasStroke"] != null && (bool)jodata["hasStroke"];
+                if (data.hasStroke)
+                {
+                    ColorUtility.TryParseHtmlString((string)jodata["strokeColor"], out data.strokeColor);
+                    data.strokeSize = jodata["strokeSize"] != null ? (float)jodata["strokeSize"] : 0f;
+                }
+
+                // 渐变
+                data.hasGradient = jodata["hasGradient"] != null && (bool)jodata["hasGradient"];
+                if (data.hasGradient)
+                {
+                    ColorUtility.TryParseHtmlString((string)jodata["gradientTopColor"], out data.gradientTopColor);
+                    ColorUtility.TryParseHtmlString((string)jodata["gradientBottomColor"], out data.gradientBottomColor);
+                    data.gradientVertical = jodata["gradientVertical"] != null ? (bool)jodata["gradientVertical"] : true;
+                }
+
                 data.uiType = "Text";
             }
             else
@@ -249,11 +407,14 @@ namespace PSDImporter
                         data.layoutType = "Grid";
                         data.uiType = "Layout";
                         break;
+                    case "ScrollRect":
+                        data.uiType = "ScrollRect";
+                        break;
                     case "Item":
                         data.uiType = "Item";
                         break;
                     case "Image":
-                        // 显式标记为 Image 或 Bg 的
+                        // 显式标记为 Image 的
                         data.uiType = "Image";
                         break;
                     case "Normal":
@@ -267,6 +428,14 @@ namespace PSDImporter
             // 后缀解析与清洗
             string rawName = data.pngName;
             data.cleanName = rawName;
+            data.stdPrefabKind = !string.IsNullOrEmpty(jsonStdPrefabKind)
+                ? jsonStdPrefabKind
+                : PSDStdPrefabSupport.DetectStdPrefabKind(rawName);
+            data.stdPrefabVariant = !string.IsNullOrEmpty(jsonStdPrefabVariant)
+                ? jsonStdPrefabVariant
+                : PSDStdPrefabSupport.DetectStdPrefabVariant(rawName);
+            data.isStdPrefabRoot = !string.IsNullOrEmpty(data.stdPrefabKind);
+            data.stdPrefabRootId = data.isStdPrefabRoot ? data.id : 0;
 
             // JSX 预计算的容器坐标默认是左上原点；若标记为 bottom-left 则无需翻转
             bool hasPrecalcFlag = jodata["precalc"] != null && (bool)jodata["precalc"];
@@ -280,15 +449,15 @@ namespace PSDImporter
                     usesPrecalcBounds = jsonUiType == "Horizontal" ||
                                         jsonUiType == "Vertical" ||
                                         jsonUiType == "Grid" ||
-                                        jsonUiType == "Item";
+                                        jsonUiType == "ScrollRect" ||
+                                        jsonUiType == "Item" ||
+                                        !string.IsNullOrEmpty(jsonStdPrefabKind);
                 }
                 else
                 {
                     usesPrecalcBounds =
-                        rawName.IndexOf("@H", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        rawName.IndexOf("@V", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        rawName.IndexOf("@G", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        rawName.IndexOf("@Item", StringComparison.OrdinalIgnoreCase) >= 0;
+                        PSDTagUtility.HasAnyTag(rawName, "@ScrollRect", "@H", "@HLayout", "@V", "@VLayout", "@G", "@Grid", "@Item", "@ItemBox", "@ItemCircle", "@PopUp") ||
+                        !string.IsNullOrEmpty(PSDStdPrefabSupport.DetectStdPrefabKind(rawName));
                 }
             }
 
@@ -310,41 +479,61 @@ namespace PSDImporter
                 data.y = canvasHeight - data.y;
             }
 
-            if (rawName.EndsWith("@H", StringComparison.OrdinalIgnoreCase) || rawName.EndsWith("@HLayout", StringComparison.OrdinalIgnoreCase))
+            if (PSDTagUtility.HasAnyTag(rawName, "@H", "@HLayout"))
             {
                 data.layoutType = "Horizontal";
-                data.cleanName = rawName.Replace("@HLayout", "").Replace("@H", ""); // 清理名字
+                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@HLayout", "@H"); // 清理名字
             }
-            else if (rawName.EndsWith("@V", StringComparison.OrdinalIgnoreCase) || rawName.EndsWith("@VLayout", StringComparison.OrdinalIgnoreCase))
+            else if (PSDTagUtility.HasAnyTag(rawName, "@V", "@VLayout"))
             {
                 data.layoutType = "Vertical";
-                data.cleanName = rawName.Replace("@VLayout", "").Replace("@V", "");
+                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@VLayout", "@V");
             }
-            else if (rawName.EndsWith("@G", StringComparison.OrdinalIgnoreCase) || rawName.EndsWith("@Grid", StringComparison.OrdinalIgnoreCase))
+            else if (PSDTagUtility.HasAnyTag(rawName, "@G", "@Grid"))
             {
                 data.layoutType = "Grid";
-                data.cleanName = rawName.Replace("@Grid", "").Replace("@G", "");
+                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@Grid", "@G");
             }
 
-            if (rawName.EndsWith("@Btn", StringComparison.OrdinalIgnoreCase))
+            if (PSDTagUtility.HasTag(rawName, "@StdBtn"))
             {
                 data.uiType = "Button";
-                data.cleanName = rawName.Replace("@Btn", "").Replace("@btn", "");
+                data.cleanName = PSDStdPrefabSupport.StripStdPrefabTags(rawName);
             }
-            else if (rawName.EndsWith("@ImgNoTrim", StringComparison.OrdinalIgnoreCase))
+            else if (PSDTagUtility.HasTag(rawName, "@ScrollRect"))
+            {
+                data.uiType = "ScrollRect";
+                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@ScrollRect", "@HLayout", "@H", "@VLayout", "@V", "@Grid", "@G");
+            }
+            else if (PSDTagUtility.HasTag(rawName, "@PopUp"))
+            {
+                data.uiType = "Panel";
+                data.cleanName = PSDStdPrefabSupport.StripStdPrefabTags(rawName);
+            }
+            else if (PSDTagUtility.HasAnyTag(rawName, "@ItemBox", "@ItemCircle"))
+            {
+                data.uiType = "Item";
+                data.cleanName = PSDStdPrefabSupport.StripStdPrefabTags(rawName);
+            }
+            else if (PSDTagUtility.HasTag(rawName, "@Btn"))
+            {
+                data.uiType = "Button";
+                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@Btn");
+            }
+            else if (PSDTagUtility.HasTag(rawName, "@Item"))
+            {
+                data.uiType = "Item";
+                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@Item");
+            }
+            else if (PSDTagUtility.HasTag(rawName, "@ImgNoTrim"))
             {
                 data.uiType = "Image";
-                data.cleanName = rawName.Replace("@ImgNoTrim", "").Replace("@imgnotrim", "");
+                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@ImgNoTrim", "@CommonSprite", "@CommonSpriteWhite", "@Bg");
             }
-            else if (rawName.EndsWith("@Bg", StringComparison.OrdinalIgnoreCase))
-            {
-                data.uiType = "RawImage";
-                data.cleanName = rawName.Replace("@Bg", "").Replace("@bg", "");
-            }
-            else if (rawName.EndsWith("@Image", StringComparison.OrdinalIgnoreCase))
+            else if (PSDTagUtility.HasAnyTag(rawName, "@Img", "@Image", "@CommonSprite", "@CommonSpriteWhite"))
             {
                 data.uiType = "Image";
-                data.cleanName = rawName.Replace("@Image", "").Replace("@image", "");
+                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@Img", "@Image", "@CommonSprite", "@CommonSpriteWhite", "@Bg");
             }
 
             return data;
@@ -363,10 +552,20 @@ namespace PSDImporter
                 groupName = GroupNameFromSourcePath((string)asset["sourcePath"]);
             }
 
+            string assetUiType = (string)asset["uiType"] ?? "Normal";
+            string assetStdPrefabKind = (string)asset["stdPrefabKind"];
+            bool inferredPrecalc = assetUiType == "Horizontal" ||
+                                   assetUiType == "Vertical" ||
+                                   assetUiType == "Grid" ||
+                                   assetUiType == "ScrollRect" ||
+                                   assetUiType == "Item" ||
+                                   !string.IsNullOrEmpty(assetStdPrefabKind);
+
             var converted = new JObject
             {
                 ["pngname"] = asset["pngName"] ?? asset["name"] ?? "",
                 ["id"] = sourceNodeId,
+                ["parentNodeId"] = asset["parentNodeId"] ?? 0,
                 ["index"] = fallbackIndex,
                 ["x"] = asset["trimBounds"]?["x"] != null && asset["trimBounds"]?["width"] != null
                     ? (float)asset["trimBounds"]["x"] + ((float?)asset["trimBounds"]["width"] ?? 0f) * 0.5f
@@ -377,17 +576,375 @@ namespace PSDImporter
                 ["width"] = (float?)asset["trimBounds"]?["width"] ?? (float?)asset["absBounds"]?["width"] ?? 0f,
                 ["height"] = (float?)asset["trimBounds"]?["height"] ?? (float?)asset["absBounds"]?["height"] ?? 0f,
                 ["uiType"] = asset["uiType"] ?? "Normal",
+                ["stdPrefabKind"] = asset["stdPrefabKind"],
+                ["stdPrefabVariant"] = asset["stdPrefabVariant"],
+                ["stdTextItems"] = asset["stdTextItems"],
                 // v2 fix: read isText from JSX asset record instead of hardcoding false
                 ["isText"] = (bool?)asset["isText"] ?? false
             };
+            if (asset["precalc"] != null)
+            {
+                converted["precalc"] = asset["precalc"];
+            }
+            else if (inferredPrecalc)
+            {
+                // assets[] stores trimBounds in bottom-left space already; keep std/layout containers from being flipped again.
+                converted["precalc"] = true;
+            }
+
+            if (asset["precalcOrigin"] != null)
+            {
+                converted["precalcOrigin"] = asset["precalcOrigin"];
+            }
+            else if (inferredPrecalc)
+            {
+                converted["precalcOrigin"] = "bottom-left";
+            }
             // Pass through text-layer fields if present in the asset record
             if (converted["isText"].ToObject<bool>())
             {
                 converted["content"] = asset["textContent"] ?? "";
                 converted["fontSize"] = asset["fontSize"];
                 converted["fontColor"] = asset["fontColor"] ?? "#000000";
+                converted["opacity"] = asset["opacity"] != null ? asset["opacity"] : 100;
+                converted["lineSpacing"] = asset["lineSpacing"] != null ? asset["lineSpacing"] : -1;
+                converted["textAlign"] = asset["textAlign"] != null ? asset["textAlign"] : "center";
+
+                // 描边/渐变字段
+                converted["hasStroke"] = (bool?)asset["hasStroke"] ?? false;
+                converted["strokeColor"] = asset["strokeColor"] ?? "#000000";
+                converted["strokeSize"] = asset["strokeSize"] ?? 0;
+                converted["hasGradient"] = (bool?)asset["hasGradient"] ?? false;
+                converted["gradientTopColor"] = asset["gradientTopColor"] ?? "#FFFFFF";
+                converted["gradientBottomColor"] = asset["gradientBottomColor"] ?? "#000000";
+                converted["gradientVertical"] = (bool?)asset["gradientVertical"] ?? true;
             }
             return ParsePicData(groupName, converted, canvasHeight);
+        }
+
+        private static List<StdPrefabTextData> ParseStdPrefabTextItems(JToken token)
+        {
+            List<StdPrefabTextData> items = new List<StdPrefabTextData>();
+            if (!(token is JArray array) || array.Count == 0)
+            {
+                return items;
+            }
+
+            for (int i = 0; i < array.Count; i++)
+            {
+                if (!(array[i] is JObject entry))
+                {
+                    continue;
+                }
+
+                StdPrefabTextData textItem = new StdPrefabTextData
+                {
+                    sourceNodeId = (int?)entry["sourceNodeId"] ?? 0,
+                    name = (string)entry["name"] ?? string.Empty,
+                    textContent = (string)entry["textContent"] ?? (string)entry["content"] ?? string.Empty,
+                    fontSize = (float?)entry["fontSize"] ?? 0f,
+                    textOpacity = (float?)entry["opacity"] ?? 100f,
+                    lineSpacing = (float?)entry["lineSpacing"] ?? -1f,
+                    textAlign = (string)entry["textAlign"] ?? "center",
+                    hasStroke = (bool?)entry["hasStroke"] ?? false,
+                    strokeSize = (float?)entry["strokeSize"] ?? 0f,
+                    width = (float?)entry["width"] ?? 0f,
+                    height = (float?)entry["height"] ?? 0f,
+                    localCenterX = (float?)entry["localCenterX"] ?? 0f,
+                    localCenterY = (float?)entry["localCenterY"] ?? 0f,
+                    normalizedCenterX = (float?)entry["normalizedCenterX"] ?? 0.5f,
+                    normalizedCenterY = (float?)entry["normalizedCenterY"] ?? 0.5f
+                };
+
+                string hexColor = (string)entry["fontColor"];
+                if (!ColorUtility.TryParseHtmlString(hexColor, out textItem.fontColor))
+                {
+                    textItem.fontColor = Color.white;
+                }
+                string strokeHexColor = (string)entry["strokeColor"];
+                if (!ColorUtility.TryParseHtmlString(strokeHexColor, out textItem.strokeColor))
+                {
+                    textItem.strokeColor = Color.black;
+                }
+
+                items.Add(textItem);
+            }
+
+            return items;
+        }
+
+        private static void PostProcessScrollRectFlags(PSDData psdData)
+        {
+            if (psdData == null || psdData.listPngData == null || psdData.listPngData.Count == 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < psdData.listPngData.Count; i++)
+            {
+                PicData item = psdData.listPngData[i];
+                item.isScrollContentAlias = false;
+                item.scrollRectRootId = PSDScrollRectUtility.IsScrollRectRoot(item) ? item.id : 0;
+                psdData.listPngData[i] = item;
+            }
+
+            for (int i = 0; i < psdData.listPngData.Count; i++)
+            {
+                PicData root = psdData.listPngData[i];
+                if (!PSDScrollRectUtility.IsScrollRectRoot(root) || root.id == 0)
+                {
+                    continue;
+                }
+
+                int aliasIndex = FindScrollContentAliasIndex(psdData, root);
+                if (aliasIndex < 0)
+                {
+                    continue;
+                }
+
+                PicData alias = psdData.listPngData[aliasIndex];
+                alias.isScrollContentAlias = true;
+                alias.scrollRectRootId = root.id;
+                alias.excludeFromRestore = true;
+                psdData.listPngData[aliasIndex] = alias;
+            }
+        }
+
+        private static int FindScrollContentAliasIndex(PSDData psdData, PicData scrollRoot)
+        {
+            List<int> candidates = new List<int>();
+            for (int i = 0; i < psdData.listPngData.Count; i++)
+            {
+                PicData item = psdData.listPngData[i];
+                if (item.id == 0 ||
+                    item.id == scrollRoot.id ||
+                    !item.hasParent ||
+                    item.parentNodeId != scrollRoot.id ||
+                    !string.Equals(item.uiType, "Layout", StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrEmpty(item.layoutType) ||
+                    string.Equals(item.layoutType, "None", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                candidates.Add(i);
+            }
+
+            if (candidates.Count == 0)
+            {
+                return -1;
+            }
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                PicData item = psdData.listPngData[candidates[i]];
+                string name = (item.cleanName ?? item.pngName ?? string.Empty).Trim();
+                if (name.IndexOf("Content", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return candidates[i];
+                }
+            }
+
+            bool rootHasLayout = !string.IsNullOrEmpty(scrollRoot.layoutType) &&
+                                 !string.Equals(scrollRoot.layoutType, "None", StringComparison.OrdinalIgnoreCase);
+            return !rootHasLayout && candidates.Count == 1 ? candidates[0] : -1;
+        }
+
+        private static void PostProcessStdPrefabFlags(PSDData psdData)
+        {
+            if (psdData == null || psdData.listPngData == null || psdData.listPngData.Count == 0)
+            {
+                return;
+            }
+
+            HashSet<int> stdRootIds = new HashSet<int>();
+            for (int i = 0; i < psdData.listPngData.Count; i++)
+            {
+                PicData item = psdData.listPngData[i];
+                if (!item.isStdPrefabRoot || item.id == 0)
+                {
+                    continue;
+                }
+
+                item.stdPrefabRootId = item.id;
+                psdData.listPngData[i] = item;
+                stdRootIds.Add(item.id);
+            }
+
+            if (stdRootIds.Count == 0)
+            {
+                return;
+            }
+
+            AbsorbSiblingTextForEmptyStdButtons(psdData);
+
+            Dictionary<int, int> parentByNodeId = new Dictionary<int, int>();
+            for (int i = 0; i < psdData.listPngData.Count; i++)
+            {
+                PicData item = psdData.listPngData[i];
+                if (item.id != 0)
+                {
+                    parentByNodeId[item.id] = item.parentNodeId;
+                }
+            }
+            if (psdData.skeleton != null && psdData.skeleton.Count > 0)
+            {
+                for (int i = 0; i < psdData.skeleton.Count; i++)
+                {
+                    PsdSkeletonNode node = psdData.skeleton[i];
+                    parentByNodeId[node.nodeId] = node.parentNodeId;
+                }
+            }
+
+            for (int i = 0; i < psdData.listPngData.Count; i++)
+            {
+                PicData item = psdData.listPngData[i];
+                if (item.isStdPrefabRoot || item.id == 0)
+                {
+                    continue;
+                }
+
+                int stdRootId = FindStdPrefabAncestorId(item.parentNodeId, parentByNodeId, stdRootIds);
+                if (stdRootId == 0)
+                {
+                    continue;
+                }
+
+                item.excludeFromRestore = true;
+                item.stdPrefabRootId = stdRootId;
+                psdData.listPngData[i] = item;
+            }
+        }
+
+        private static void AbsorbSiblingTextForEmptyStdButtons(PSDData psdData)
+        {
+            if (psdData == null || psdData.listPngData == null || psdData.listPngData.Count == 0)
+            {
+                return;
+            }
+
+            HashSet<int> absorbedTextIds = new HashSet<int>();
+            for (int i = 0; i < psdData.listPngData.Count; i++)
+            {
+                PicData button = psdData.listPngData[i];
+                if (!PSDStdPrefabSupport.IsStdButton(button) ||
+                    button.stdTextItems != null && button.stdTextItems.Count > 0)
+                {
+                    continue;
+                }
+
+                List<StdPrefabTextData> absorbedTexts = new List<StdPrefabTextData>();
+                for (int j = 0; j < psdData.listPngData.Count; j++)
+                {
+                    PicData candidate = psdData.listPngData[j];
+                    if (!candidate.isText ||
+                        candidate.id == 0 ||
+                        candidate.id == button.id ||
+                        candidate.parentNodeId != button.parentNodeId ||
+                        absorbedTextIds.Contains(candidate.id))
+                    {
+                        continue;
+                    }
+
+                    if (!IsTextInsideStdButtonBounds(button, candidate))
+                    {
+                        continue;
+                    }
+
+                    absorbedTexts.Add(ConvertSiblingTextToStdText(button, candidate));
+                    absorbedTextIds.Add(candidate.id);
+
+                    candidate.excludeFromRestore = true;
+                    candidate.stdPrefabRootId = button.id;
+                    psdData.listPngData[j] = candidate;
+                }
+
+                if (absorbedTexts.Count == 0)
+                {
+                    continue;
+                }
+
+                absorbedTexts.Sort((a, b) => a.localCenterX.CompareTo(b.localCenterX));
+                button.stdTextItems = absorbedTexts;
+                psdData.listPngData[i] = button;
+            }
+        }
+
+        private static bool IsTextInsideStdButtonBounds(PicData button, PicData text)
+        {
+            float buttonLeft = button.x - button.width * 0.5f;
+            float buttonRight = button.x + button.width * 0.5f;
+            float buttonBottom = button.y - button.height * 0.5f;
+            float buttonTop = button.y + button.height * 0.5f;
+
+            if (text.x >= buttonLeft && text.x <= buttonRight &&
+                text.y >= buttonBottom && text.y <= buttonTop)
+            {
+                return true;
+            }
+
+            float textLeft = text.x - text.width * 0.5f;
+            float textRight = text.x + text.width * 0.5f;
+            float textBottom = text.y - text.height * 0.5f;
+            float textTop = text.y + text.height * 0.5f;
+
+            float overlapW = Mathf.Max(0f, Mathf.Min(buttonRight, textRight) - Mathf.Max(buttonLeft, textLeft));
+            float overlapH = Mathf.Max(0f, Mathf.Min(buttonTop, textTop) - Mathf.Max(buttonBottom, textBottom));
+            float textArea = Mathf.Max(1f, text.width * text.height);
+            return overlapW * overlapH / textArea >= 0.5f;
+        }
+
+        private static StdPrefabTextData ConvertSiblingTextToStdText(PicData rootItem, PicData textItem)
+        {
+            float rootLeft = rootItem.x - rootItem.width * 0.5f;
+            float rootTop = rootItem.y + rootItem.height * 0.5f;
+            float localCenterX = textItem.x - rootLeft;
+            float localCenterY = rootTop - textItem.y;
+
+            return new StdPrefabTextData
+            {
+                sourceNodeId = textItem.id,
+                name = !string.IsNullOrEmpty(textItem.cleanName) ? textItem.cleanName : textItem.pngName,
+                textContent = textItem.textContent,
+                fontSize = textItem.fontSize,
+                fontColor = textItem.fontColor,
+                textOpacity = textItem.textOpacity,
+                lineSpacing = textItem.lineSpacing,
+                textAlign = textItem.textAlign,
+                hasStroke = textItem.hasStroke,
+                strokeColor = textItem.strokeColor,
+                strokeSize = textItem.strokeSize,
+                width = textItem.width,
+                height = textItem.height,
+                localCenterX = localCenterX,
+                localCenterY = localCenterY,
+                normalizedCenterX = rootItem.width > 0.01f ? Mathf.Clamp01(localCenterX / rootItem.width) : 0.5f,
+                normalizedCenterY = rootItem.height > 0.01f ? Mathf.Clamp01(localCenterY / rootItem.height) : 0.5f
+            };
+        }
+
+        private static int FindStdPrefabAncestorId(
+            int parentNodeId,
+            Dictionary<int, int> parentByNodeId,
+            HashSet<int> stdRootIds)
+        {
+            int cursor = parentNodeId;
+            int guard = 0;
+            while (cursor > 0 && guard < 2048)
+            {
+                guard++;
+                if (stdRootIds.Contains(cursor))
+                {
+                    return cursor;
+                }
+
+                if (!parentByNodeId.TryGetValue(cursor, out cursor))
+                {
+                    break;
+                }
+            }
+
+            return 0;
         }
 
         private static void ParseSkeleton(PSDData psdData, JArray skeletonArray)
@@ -449,6 +1006,9 @@ namespace PSDImporter
                 {
                     guard++;
                     if (!nameByNode.TryGetValue(cursor.Value, out string parentName)) break;
+                    // 与 JSX skinName 对齐：父节点名包含 @ 标记时截断（ExportToPNG.jsx L126）
+                    // @ 标记的组（@Btn、@Img 等）不会成为 PNG 导出的子目录
+                    if (parentName.IndexOf('@') >= 0) break;
                     if (!string.IsNullOrEmpty(parentName)) segs.Add(parentName);
                     if (!parentByNode.TryGetValue(cursor.Value, out int? nextParent)) break;
                     cursor = nextParent;
@@ -465,9 +1025,19 @@ namespace PSDImporter
             if (string.IsNullOrEmpty(sourcePath)) return "root/";
             // trim: 防 JSX 端残留前后空白（旧 .ps.data 数据兼容）
             string trimmed = sourcePath.Trim();
-            int idx = trimmed.LastIndexOf('/');
-            if (idx <= 0) return "root/";
-            return trimmed.Substring(0, idx).Trim() + "/";
+            // 按 / 拆分路径段（不含最后一个段，即图层自身）
+            string[] parts = trimmed.Split('/');
+            if (parts.Length <= 1) return "root/";
+            // 从后往前遍历父路径段，遇到包含 @ 的段就截断（与 JSX skinName 对齐）
+            var segs = new List<string>();
+            for (int i = parts.Length - 2; i >= 0; i--) // -2: 排除最后一个段（图层自身）
+            {
+                string seg = parts[i].Trim();
+                if (seg.IndexOf('@') >= 0) break; // @ 标记的组名截断
+                if (!string.IsNullOrEmpty(seg)) segs.Add(seg);
+            }
+            segs.Reverse();
+            return segs.Count > 0 ? string.Join("/", segs) + "/" : "root/";
         }
 
         private static int StableHash32(string value)

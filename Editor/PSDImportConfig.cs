@@ -3,6 +3,13 @@ using UnityEditor;
 
 namespace PSDImporter
 {
+    public enum PSDCommonSpriteMatchMode
+    {
+        TaggedOnly = 0,
+        AutoAndTagged = 1,
+        Aggressive = 2
+    }
+
     [CreateAssetMenu(fileName = "PSDImportConfig", menuName = "PSDTools/Import Config")]
     public class PSDImportConfig : ScriptableObject
     {
@@ -17,6 +24,9 @@ namespace PSDImporter
         [Range(0, 10)] public float weightPosition = 1.0f; // 位置权重
         [Range(0, 10)] public float weightSize = 0.8f;     // 尺寸权重 (建议比位置略低)
         [Range(0, 10)] public float weightType = 2.0f;     // 类型权重 (类型对不上通常就是错的)
+        [Range(0, 10)] public float weightDepth = 0.3f;
+        [Range(0, 10)] public float weightAnchor = 0.1f;
+        [Min(1)] public int maxDepthDiff = 10;
 
         [Header("调试")]
         public bool showDetailedLog = true;
@@ -34,27 +44,36 @@ namespace PSDImporter
         public string dedupeMoveFolder = "_Duplicates";
 
         [Header("Common Sprite Matching")]
-        [Tooltip("Enable @Common layer matching against project sprites.")]
-        public bool commonSpriteMatch = false;
+        [Tooltip("Enable @CommonSprite/@CommonSpriteWhite layer matching against project sprites.")]
+        public bool commonSpriteMatch = true;
 
-        [Tooltip("Folders under Assets that contain common sprites (used for @Common matching).")]
-        public string[] commonSpriteFolders = new string[0];
+        [Tooltip("Controls which PSD image layers can reuse project common sprites.")]
+        public PSDCommonSpriteMatchMode commonSpriteMatchMode = PSDCommonSpriteMatchMode.AutoAndTagged;
 
-        [Tooltip("Perceptual hash threshold for @Common fallback (0 to disable).")]
+        [Tooltip("Folders under Assets that contain common sprites (used for @CommonSprite matching).")]
+        public string[] commonSpriteFolders = new[]
+        {
+            "Assets/ArtWorks/UI/Resources/Mini/UITextures/Common",
+            "Assets/ArtWorks/UI/Resources/Mini/UITextures/Common2",
+            "Assets/ArtWorks/UI/Resources/Mini/UITextures/Panel",
+            "Assets/ArtWorks/UI/Resources/Mini/UITextures/Panel2"
+        };
+
+        [Tooltip("Folders under Assets that contain white tintable common sprites (used for @CommonSpriteWhite matching). Empty means fallback to commonSpriteFolders.")]
+        public string[] commonSpriteWhiteFolders = new string[0];
+
+        [Tooltip("Perceptual hash threshold for @CommonSprite fallback (0 to disable).")]
         public int commonSpritePerceptualThreshold = 8;
 
-        [Tooltip("Move matched @Common exports into a subfolder for manual cleanup.")]
-        public bool commonSpriteMoveMatched = true;
+        [Tooltip("Move matched @CommonSprite/@CommonSpriteWhite exports into a subfolder for manual cleanup.")]
+        public bool commonSpriteMoveMatched = false;
 
-        [Tooltip("Subfolder name under PSD asset folder for matched @Common exports.")]
+        [Tooltip("Subfolder name under PSD asset folder for matched @CommonSprite/@CommonSpriteWhite exports.")]
         public string commonSpriteMoveFolder = "_CommonMatched";
 
         [Header("Component Overrides (optional)")]
         [Tooltip("Override @Img/@Image component. Must derive from UnityEngine.UI.Image.")]
         public MonoScript imageComponent;
-
-        [Tooltip("Override @Bg component. Must derive from UnityEngine.UI.RawImage.")]
-        public MonoScript rawImageComponent;
 
         [Tooltip("Override @Btn component. Must derive from UnityEngine.UI.Button.")]
         public MonoScript buttonComponent;
@@ -65,6 +84,34 @@ namespace PSDImporter
         [Header("Text Font Override")]
         [Tooltip("If set, all generated/restored Text components use this font.")]
         public Font defaultTextFont;
+
+        [Header("Text Layout Matching")]
+        [Tooltip("Extra horizontal room added to generated/restored Text RectTransforms so Unity wrapping does not move the visible glyphs.")]
+        [Min(0f)]
+        public float textLayoutPaddingX = 24f;
+
+        [Tooltip("Extra vertical room added to generated/restored Text RectTransforms.")]
+        [Min(0f)]
+        public float textLayoutPaddingY = 8f;
+
+        [Tooltip("Keep an existing Text RectTransform when it is already larger than the PSD visual text bounds plus padding.")]
+        public bool textPreserveLargerLayoutRect = true;
+
+        [Tooltip("Only expand Text to its single-line preferred width when preferredWidth <= PSD width * this ratio. Larger text is treated as intentionally wrapped.")]
+        [Min(1f)]
+        public float textSingleLineExpansionMaxRatio = 1.25f;
+
+        [Tooltip("Only expand Text to its single-line preferred width when the extra width is below this pixel threshold. Larger text is treated as intentionally wrapped.")]
+        [Min(0f)]
+        public float textSingleLineExpansionMaxExtraWidth = 96f;
+
+        [Tooltip("Down-weight size mismatch for Text matching because Unity's layout box is intentionally larger than the PSD glyph bounds.")]
+        [Range(0f, 1f)]
+        public float textSizeScoreWeightMultiplier = 0.35f;
+
+        [Tooltip("Size error ratio needed before Text candidates are rejected by geometry reject.")]
+        [Range(0f, 1f)]
+        public float textGeometryRejectSizeRatio = 0.6f;
 
         [Header("Layout Overrides (optional)")]
         [Tooltip("Override @H layout group. Must derive from UnityEngine.UI.HorizontalLayoutGroup.")]
@@ -77,6 +124,9 @@ namespace PSDImporter
         public MonoScript gridLayoutComponent;
 
         [Header("Matching Filters")]
+        [Tooltip("Use saved PSDBindingData layer-ID history before scoring. Disable during audit/tuning so stale bindings do not override the matcher.")]
+        public bool enableIdHistoryMatch = false;
+
         [Tooltip("When enabled, inactive prefab nodes are ignored during auto match.")]
         public bool skipInactiveMatch = false;
 
@@ -91,9 +141,86 @@ namespace PSDImporter
         [Min(0f)]
         public float minAcceptScore = 1f;
 
+        [Header("Geometry Reject")]
+        [Tooltip("Reject candidates whose center and size are both clearly wrong, even if their type score is high.")]
+        public bool enableGeometryReject = true;
+
+        [Tooltip("Reject when distance > maxDistanceError * this multiplier and size error also exceeds geometryRejectSizeRatio.")]
+        [Min(0.1f)]
+        public float geometryRejectDistanceMultiplier = 1f;
+
+        [Tooltip("Average relative width/height error needed for geometry rejection.")]
+        [Range(0f, 1f)]
+        public float geometryRejectSizeRatio = 0.25f;
+
+        [Header("Candidate Pruning")]
+        [Tooltip("Skip candidates that are clearly too far away before Hungarian assignment.")]
+        public bool enableCandidatePruning = true;
+
+        [Tooltip("Spatial prune radius = maxDistanceError * this multiplier.")]
+        [Min(0.1f)]
+        public float candidateDistanceMultiplier = 2.5f;
+
+        [Header("Type Compatibility Matching")]
+        [Tooltip("兼容类型匹配分（0~100）。当 PSD 类型与白膜组件类型不同但可互换时（如 Text↔Image 美术字替换），使用此分数代替 0。\n设为 0 则禁用兼容匹配（保持原有严格类型过滤行为）。推荐值: 40")]
+        [Range(0f, 100f)]
+        public float typeCompatScore = 40f;
+
+        [Header("Parent Affinity Bonus")]
+        [Tooltip("父级亲和力加成。当 PSD 项的父节点已匹配到某个白膜节点时，对该白膜节点的子节点匹配位置分乘以此倍数。\n设为 1.0 则禁用加成。推荐值: 1.3~1.5（防止子节点跑到其他父节点下）")]
+        [Range(1f, 3f)]
+        public float parentAffinityBonus = 1.3f;
+
+        [Tooltip("Position-score multiplier for descendants of an already matched PSD parent.")]
+        [Range(1f, 3f)]
+        public float hierarchyDescendantAffinityBonus = 1.1f;
+
+        [Tooltip("Total-score multiplier for candidates outside an already matched PSD parent.")]
+        [Range(0f, 1f)]
+        public float hierarchyOutsideParentPenalty = 0.85f;
+
+        [Header("Standard Prefab Matching")]
+        [Tooltip("Enable @StdBtn matching against the NormalBtn common prefab folder.")]
+        public bool enableStdButtonMatch = true;
+
+        [Tooltip("Prefab folder used by @StdBtn. Only prefabs in this folder are considered.")]
+        public string stdButtonPrefabFolder = "Assets/ArtWorks/UI/Resources/Mini/UIPrefabs/CommonPrefbs/Btn/NormalBtn";
+
+        [Tooltip("Minimum score required to reuse an existing white-mask standard button instance.")]
+        [Min(0f)]
+        public float stdButtonReuseMinScore = 120f;
+
+        [Tooltip("Minimum score gap between top1 and top2 candidates. Lower confidence falls back to instantiate.")]
+        [Min(0f)]
+        public float stdButtonReuseMinGap = 15f;
+
+        [Tooltip("Enable @ItemBox/@ItemCircle matching against the ItemIconNew common prefab folder.")]
+        public bool enableStdItemMatch = true;
+
+        [Tooltip("Prefab folder used by @ItemBox/@ItemCircle. Only supported common item prefabs in this folder are considered.")]
+        public string stdItemPrefabFolder = "Assets/ArtWorks/UI/Resources/Mini/UIPrefabs/CommonPrefbs/ItemIconNew";
+
+        [Tooltip("Enable @PopUp matching against the common popup panel prefab folder.")]
+        public bool enableStdPopupMatch = true;
+
+        [Tooltip("Prefab folder used by @PopUp. Only Pnl_Win00 through Pnl_Win09 are considered.")]
+        public string stdPopupPrefabFolder = "Assets/ArtWorks/UI/Resources/Mini/UIPrefabs/CommonPrefbs/Panel";
+
+        [Tooltip("Minimum score required to reuse an existing white-mask popup panel instance.")]
+        [Min(0f)]
+        public float stdPopupReuseMinScore = 120f;
+
+        [Tooltip("Minimum score gap between top1 and top2 popup candidates. Lower confidence falls back to instantiate.")]
+        [Min(0f)]
+        public float stdPopupReuseMinGap = 15f;
+
+        [Header("Auto Create Unmatched Nodes")]
+        [Tooltip("当 PSD 中有节点在白膜中找不到匹配时（装饰图、新增节点），自动在对应父节点下创建子节点。\n关闭则保持原有行为（仅标记 Unmatched，不创建）。")]
+        public bool autoCreateUnmatched = true;
+
         [Header("Layered Matching (Phase 3.5 Pre-Lock)")]
         [Tooltip("Enable high-confidence pre-lock before Hungarian algorithm to prevent global-optimal misassignment.\nWhen enabled, match pairs exceeding threshold with exclusive-optimal detection are locked before Hungarian runs.")]
-        public bool preLockEnabled = false;
+        public bool preLockEnabled = true;
 
         [Tooltip("Minimum score for a match pair to be considered high-confidence pre-lockable.\nPairs scoring above this AND passing exclusive-optimal check will be pre-locked before Hungarian.\nRecommended: higher than perfectThreshold (150), e.g. 200.")]
         [Min(0f)]
@@ -103,6 +230,30 @@ namespace PSDImporter
         [Range(0.5f, 1f)]
         public float preLockColumnUniquenessRatio = 0.85f;
 
+        [Tooltip("Use score matrix distribution to derive the pre-lock threshold.")]
+        public bool preLockUseDynamicThreshold = true;
+
+        [Tooltip("Dynamic threshold = max(matrixMaxScore * ratio, dynamic min threshold).")]
+        [Range(0.1f, 1f)]
+        public float preLockDynamicRatio = 0.7f;
+
+        [Tooltip("Minimum score for dynamic pre-lock threshold.")]
+        [Min(0f)]
+        public float preLockDynamicMinThreshold = 180f;
+
+        [Tooltip("Minimum row gap between best and second-best candidate for pre-lock.")]
+        [Min(0f)]
+        public float preLockMinScoreGap = 15f;
+
+        [Header("Match Confidence")]
+        [Tooltip("A match with score gap below this value is shown as low confidence and will not auto-confirm.")]
+        [Min(0f)]
+        public float lowConfidenceMargin = 15f;
+
+        [Header("Text Effects (require UITextOutline/UITextGradient scripts)")]
+        [Tooltip("Enable PSD text stroke and gradient effect mapping. Requires UITextOutline and UITextGradient scripts in project.\nDisable when project does not have these custom scripts to avoid errors.")]
+        public bool enableTextStrokeGradient = false;
+
         [Header("Debug Options")]
         [Tooltip("Always print Top5 candidates even when all items are matched by ID.")]
         public bool forceCandidateLog = false;
@@ -110,9 +261,5 @@ namespace PSDImporter
         [Tooltip("Print node/PSD root-local geometry (center/size) during match scoring for debugging anchor/pivot/scale/layout impact.")]
         public bool logMatchGeometry = false;
 
-        [Header("Auto Learn (ML)")]
-        [Tooltip("Optional ML config asset.")]
-        [HideInInspector]
-        public PSDMatchMLConfig mlConfig;
     }
 }

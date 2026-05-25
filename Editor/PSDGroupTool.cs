@@ -21,12 +21,11 @@ namespace PSDImporter
             }
 
             // 判断是否为“组节点”
-            // 判定标准：有子节点 && 自己身上没有渲染组件(Image/Text/RawImage)
+            // 判定标准：有子节点 && 自己身上没有渲染组件(Image/Text)
             // (根据你的项目需求，也可以放宽标准，比如有Image但也想包围子节点)
             bool isGroup = root.childCount > 0 &&
                            root.GetComponent<Image>() == null &&
-                           root.GetComponent<Text>() == null &&
-                           root.GetComponent<RawImage>() == null;
+                           root.GetComponent<Text>() == null;
 
             // 根节点（通常是Canvas或者Panel背景）不要动
             if (root.parent == null || root.GetComponent<Canvas>() != null) isGroup = false;

@@ -1,19 +1,20 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace PSDImporter
 {
     public static class VisualBindingRestoreService
     {
+        private const float IdHistoryMinIou = 0.05f;
+        private const float IdHistoryMaxCenterDistance = 80f;
+        private const float IdHistoryMaxSizeErrorRatio = 0.75f;
+
         private struct ScoreBreakdown
         {
             public PSDMatchScoring.ScoreBreakdown core;
-            public float mlProb;
-            public bool mlUsed;
 
             public float distance => core.geometry.distance;
             public float diffW => core.geometry.diffW;
@@ -21,9 +22,13 @@ namespace PSDImporter
             public float scorePos => core.scorePos;
             public float scoreSize => core.scoreSize;
             public float scoreType => core.scoreType;
+            public float scoreDepth => core.scoreDepth;
+            public float scoreAnchor => core.scoreAnchor;
             public float weightedPos => core.weightedPos;
             public float weightedSize => core.weightedSize;
             public float weightedType => core.weightedType;
+            public float weightedDepth => core.weightedDepth;
+            public float weightedAnchor => core.weightedAnchor;
             public float total => core.total;
             public bool passThresholds => core.passThresholds;
         }
@@ -76,13 +81,12 @@ namespace PSDImporter
                     Debug.LogWarning("[Match] targetRoot is not a RectTransform, skip auto match.");
                     return;
                 }
+                PSDMatchGeometry.RebuildLayoutForGeometry(rootRectTransform);
                 bool logDetail = matchConfig.showDetailedLog;
                 bool forceCandidateLog = matchConfig.forceCandidateLog;
                 bool logCandidatesInLoop = logDetail && !forceCandidateLog;
-
-                // ML path is temporarily disabled. Always use manual weighted scoring.
-                bool useMlScore = false;
-                PSDMatchModel mlModel = null;
+                bool stdPrefabEnabled = PSDStdPrefabSupport.HasAnyStdPrefabMatchEnabled(matchConfig);
+                bool idHistoryEnabled = matchConfig.enableIdHistoryMatch;
 
                 float perfectThreshold = 150f;
                 HashSet<Transform> occupiedNodes = new HashSet<Transform>();
@@ -90,15 +94,37 @@ namespace PSDImporter
 
                 if (logDetail)
                 {
-                    Debug.Log($"[Match] Config maxDist={matchConfig.maxDistanceError:F1}, maxSizeDiff={matchConfig.maxSizeDiff:F1}, weightPos={matchConfig.weightPosition:F2}, weightSize={matchConfig.weightSize:F2}, weightType={matchConfig.weightType:F2}, skipInactive={matchConfig.skipInactiveMatch}, allowUnmatched={matchConfig.allowUnmatched}, unmatchedPenalty={matchConfig.unmatchedPenalty:F1}, minAcceptScore={matchConfig.minAcceptScore:F1}, forceCandidateLog={forceCandidateLog}, useMlScore={useMlScore}");
+                    Debug.Log($"[Match] Config maxDist={matchConfig.maxDistanceError:F1}, maxSizeDiff={matchConfig.maxSizeDiff:F1}, weightPos={matchConfig.weightPosition:F2}, weightSize={matchConfig.weightSize:F2}, weightType={matchConfig.weightType:F2}, weightDepth={matchConfig.weightDepth:F2}, weightAnchor={matchConfig.weightAnchor:F2}, maxDepthDiff={matchConfig.maxDepthDiff}, idHistory={idHistoryEnabled}, skipInactive={matchConfig.skipInactiveMatch}, allowUnmatched={matchConfig.allowUnmatched}, unmatchedPenalty={matchConfig.unmatchedPenalty:F1}, minAcceptScore={matchConfig.minAcceptScore:F1}, forceCandidateLog={forceCandidateLog}");
                 }
 
                 foreach (var bind in bindings)
                 {
+                    ResetMatchDiagnostics(bind);
                     if (bind.isConfirmed && bind.unityNode != null)
                     {
-                        occupiedNodes.Add(bind.unityNode);
-                        matchedBindings.Add(bind);
+                        bool canKeepConfirmed = true;
+                        if (stdPrefabEnabled && PSDStdPrefabSupport.IsStdPrefabRoot(bind.psdItem))
+                        {
+                            canKeepConfirmed = PSDStdPrefabSupport.IsReservedStdPrefabNode(bind.unityNode as RectTransform, matchConfig);
+                            bind.stdPrefabMode = canKeepConfirmed ? StdPrefabApplyMode.ReuseExisting : StdPrefabApplyMode.None;
+                        }
+
+                        if (canKeepConfirmed)
+                        {
+                            SetFixedMatchConfidence(bind, bind.score > 0f ? bind.score : 9999f);
+                            occupiedNodes.Add(bind.unityNode);
+                            matchedBindings.Add(bind);
+                        }
+                        else
+                        {
+                            bind.unityNode = null;
+                            bind.score = 0;
+                            bind.isConfirmed = false;
+                            bind.statusInfo = "Waiting for match";
+                            bind.isIdMatched = false;
+                            ResetMatchDiagnostics(bind);
+                            bind.stdPrefabAssetPath = null;
+                        }
                     }
                     else
                     {
@@ -106,9 +132,13 @@ namespace PSDImporter
                         bind.score = 0;
                         bind.statusInfo = "Waiting for match";
                         bind.isIdMatched = false;
+                        ResetMatchDiagnostics(bind);
+                        bind.stdPrefabMode = StdPrefabApplyMode.None;
+                        bind.stdPrefabAssetPath = null;
                     }
                 }
 
+                List<BindingPairViewModel> stdPrefabBinds = new List<BindingPairViewModel>();
                 List<BindingPairViewModel> pendingBinds = new List<BindingPairViewModel>();
                 foreach (var bind in bindings)
                 {
@@ -117,28 +147,75 @@ namespace PSDImporter
                         continue;
                     }
 
-                    if (bindingAsset != null)
+                    if (idHistoryEnabled && bindingAsset != null)
                     {
-                        GameObject savedGo = bindingAsset.GetBindTarget(bind.psdItem.id);
-                        if (savedGo != null && savedGo.transform.IsChildOf(rootTransform) && !occupiedNodes.Contains(savedGo.transform))
-                        {
-                            bind.unityNode = savedGo.transform;
-                            bind.score = 9999f;
-                            bind.statusInfo = "ID history binding";
-                            bind.isIdMatched = true;
-                            bind.isConfirmed = true;
-                            matchedBindings.Add(bind);
-                            occupiedNodes.Add(savedGo.transform);
+                        GameObject savedGo = bindingAsset.GetBindTarget(bind.psdItem.id, rootTransform);
+                        bool canUseSavedGo = savedGo != null &&
+                                             savedGo.transform.IsChildOf(rootTransform) &&
+                                             !occupiedNodes.Contains(savedGo.transform);
 
-                            if (logDetail)
+                        if (canUseSavedGo && stdPrefabEnabled && PSDStdPrefabSupport.IsStdPrefabRoot(bind.psdItem))
+                        {
+                            canUseSavedGo = PSDStdPrefabSupport.IsReservedStdPrefabNode(savedGo.transform as RectTransform, matchConfig);
+                        }
+
+                        if (canUseSavedGo)
+                        {
+                            if (!IsIdHistoryGeometryAcceptable(bind, savedGo.transform as RectTransform, rootRectTransform, cachedPsdData, out string rejectReason))
                             {
-                                Debug.Log($"[Match] Saved binding for {bind.psdItem.pngName} -> {GetTransformPath(savedGo.transform)} score=9999 (ID)");
+                                bind.idHistoryRejected = true;
+                                bind.idHistoryRejectedPath = GetTransformPath(savedGo.transform);
+                                bind.idHistoryRejectReason = rejectReason;
+                                bind.statusInfo = $"ID history rejected: {rejectReason}";
+                                if (logDetail)
+                                {
+                                    Debug.Log($"[Match] Reject saved binding for {bind.psdItem.pngName} -> {GetTransformPath(savedGo.transform)} ({rejectReason})");
+                                }
                             }
-                            continue;
+                            else
+                            {
+                                bind.unityNode = savedGo.transform;
+                                bind.score = 9999f;
+                                bind.statusInfo = "ID history binding";
+                                bind.isIdMatched = true;
+                                bind.isConfirmed = true;
+                                SetFixedMatchConfidence(bind, bind.score);
+                                if (stdPrefabEnabled && PSDStdPrefabSupport.IsStdPrefabRoot(bind.psdItem))
+                                {
+                                    bind.stdPrefabMode = StdPrefabApplyMode.ReuseExisting;
+                                }
+                                matchedBindings.Add(bind);
+                                occupiedNodes.Add(savedGo.transform);
+
+                                if (logDetail)
+                                {
+                                    Debug.Log($"[Match] Saved binding for {bind.psdItem.pngName} -> {GetTransformPath(savedGo.transform)} score=9999 (ID)");
+                                }
+                                continue;
+                            }
                         }
                     }
 
+                    if (stdPrefabEnabled && PSDStdPrefabSupport.IsStdPrefabRoot(bind.psdItem))
+                    {
+                        stdPrefabBinds.Add(bind);
+                        bind.statusInfo = "Waiting for standard prefab match";
+                        continue;
+                    }
+
                     pendingBinds.Add(bind);
+                }
+
+                if (stdPrefabEnabled && stdPrefabBinds.Count > 0)
+                {
+                    List<BindingPairViewModel> earlyStdPrefabBinds = stdPrefabBinds
+                        .Where(b => b != null && (PSDStdPrefabSupport.IsStdButton(b.psdItem) || PSDStdPrefabSupport.IsStdPopup(b.psdItem)))
+                        .ToList();
+                    if (earlyStdPrefabBinds.Count > 0)
+                    {
+                        ResolveStdPrefabBindings(earlyStdPrefabBinds, targetRoot, cachedPsdData, matchConfig, occupiedNodes, matchedBindings, logDetail);
+                        stdPrefabBinds.RemoveAll(b => b != null && (PSDStdPrefabSupport.IsStdButton(b.psdItem) || PSDStdPrefabSupport.IsStdPopup(b.psdItem)));
+                    }
                 }
 
                 var allNodes = targetRoot.GetComponentsInChildren<RectTransform>(true);
@@ -148,9 +225,11 @@ namespace PSDImporter
                 int skippedRoot = 0;
                 int skippedOccupied = 0;
                 int skippedInactive = 0;
+                int skippedStdPrefab = 0;
                 int skippedRootLog = 0;
                 int skippedInactiveLog = 0;
                 int skippedOccupiedLog = 0;
+                int skippedStdPrefabLog = 0;
 
                 foreach (var node in allNodes)
                 {
@@ -161,10 +240,24 @@ namespace PSDImporter
                         continue;
                     }
 
-                    if (matchConfig.skipInactiveMatch && !node.gameObject.activeInHierarchy)
+                    if (PSDMatchNodeFilter.ShouldSkipInactiveMatch(node, rootTransform, matchConfig))
                     {
                         skippedInactive++;
                         skippedInactiveLog++;
+                        continue;
+                    }
+
+                    if (PSDStdPrefabSupport.IsInsideReservedStdPrefab(node, matchConfig))
+                    {
+                        skippedStdPrefab++;
+                        skippedStdPrefabLog++;
+                        continue;
+                    }
+
+                    if (IsInsideMatchedStdPrefab(node, matchedBindings))
+                    {
+                        skippedStdPrefab++;
+                        skippedStdPrefabLog++;
                         continue;
                     }
 
@@ -190,10 +283,10 @@ namespace PSDImporter
 
                 if (logDetail)
                 {
-                    Debug.Log($"[Match] Candidate nodes={nodeList.Count}, skipped(root:{skippedRoot}, occupied:{skippedOccupied}, inactive:{skippedInactive})");
+                    Debug.Log($"[Match] Candidate nodes={nodeList.Count}, skipped(root:{skippedRoot}, occupied:{skippedOccupied}, inactive:{skippedInactive}, std:{skippedStdPrefab})");
                     if (forceCandidateLog)
                     {
-                        Debug.Log($"[Match] Candidate nodes(for log)={nodeListForLog.Count}, skipped(root:{skippedRootLog}, occupied:{skippedOccupiedLog}, inactive:{skippedInactiveLog})");
+                        Debug.Log($"[Match] Candidate nodes(for log)={nodeListForLog.Count}, skipped(root:{skippedRootLog}, occupied:{skippedOccupiedLog}, inactive:{skippedInactiveLog}, std:{skippedStdPrefabLog})");
                     }
                 }
 
@@ -201,43 +294,109 @@ namespace PSDImporter
                 {
                     foreach (var bind in bindings)
                     {
-                        LogTopCandidatesForBind(bind, nodeListForLog, rootTransform, cachedPsdData, matchConfig, useMlScore, mlModel, skippedRootLog, skippedInactiveLog, skippedOccupiedLog);
+                        LogTopCandidatesForBind(bind, nodeListForLog, rootTransform, cachedPsdData, matchConfig, skippedRootLog, skippedInactiveLog, skippedOccupiedLog);
                     }
                 }
 
                 int itemCount = pendingBinds.Count;
                 int nodeCount = nodeList.Count;
+                Dictionary<RectTransform, PSDMatchGeometry.NodeGeom> nodeGeomCache = BuildNodeGeomCache(nodeList, rootRectTransform);
                 if (itemCount == 0 || nodeCount == 0)
                 {
                     foreach (var bind in pendingBinds)
                     {
                         bind.statusInfo = "No suitable node found";
                     }
+                    ResolveStdPrefabBindings(stdPrefabBinds, targetRoot, cachedPsdData, matchConfig, occupiedNodes, matchedBindings, logDetail);
+                    LogUnmatchedSummary(bindings);
+                    if (logDetail)
+                    {
+                        PSDMatchLogExporter.Export(bindings, targetRoot, cachedPsdData, matchConfig);
+                    }
                     return;
+                }
+
+                // ── P2: 构建 PSD parentId → 已匹配白膜 Transform 映射 ──────────────────
+                // 每次计算前快照当前 matchedBindings（ID历史绑定）
+                // 在评分矩阵阶段动态查询（串行 i 循环，前序已匹配项可被后续使用）
+                // key: PSD id, value: 已绑定的白膜 Transform
+                Dictionary<int, Transform> psdIdToMatchedNode = new Dictionary<int, Transform>();
+                foreach (var mb in matchedBindings)
+                {
+                    if (mb.unityNode != null)
+                        RegisterHierarchyNode(psdIdToMatchedNode, mb.psdItem, mb.unityNode, cachedPsdData);
                 }
 
                 float[,] scoreMatrix = new float[itemCount, nodeCount];
                 bool[,] validMatrix = new bool[itemCount, nodeCount];
                 float maxScore = 0f;
+                int totalSkippedSpatial = 0;
+                int totalHierarchyPenalized = 0;
 
                 for (int i = 0; i < itemCount; i++)
                 {
                     var bind = pendingBinds[i];
+                    ResetMatchDiagnostics(bind, clearHistoryDiagnostics: false);
                     var psdGeom = PSDMatchGeometry.BuildPsdGeom(bind.psdItem, cachedPsdData.width, cachedPsdData.height);
                     List<MatchCandidate> localCandidates = logCandidatesInLoop ? new List<MatchCandidate>() : null;
                     int skippedType = 0;
+                    int skippedSpatial = 0;
+                    int hierarchyPenalized = 0;
+
+                    // ── P2: 查询此 PSD 项的父节点是否已匹配到白膜节点 ──────────────────
+                    Transform matchedParentNode = null;
+                    bool useHierarchyPreference = matchConfig.parentAffinityBonus > 1f ||
+                                                  matchConfig.hierarchyDescendantAffinityBonus > 1f ||
+                                                  matchConfig.hierarchyOutsideParentPenalty < 1f;
+                    if (bind.psdItem.parentNodeId > 0 && useHierarchyPreference)
+                    {
+                        psdIdToMatchedNode.TryGetValue(bind.psdItem.parentNodeId, out matchedParentNode);
+                    }
 
                     for (int j = 0; j < nodeCount; j++)
                     {
                         var node = nodeList[j];
-                        if (!IsTypeMatch(node, bind.psdItem.uiType))
+
+                        // ── P0: 类型兼容性评分 ──────────────────────────────────────────
+                        float typeScore = GetTypeMatchScore(node, bind.psdItem, matchConfig.typeCompatScore);
+                        if (typeScore <= 0f)
                         {
                             skippedType++;
                             continue;
                         }
 
-                        ScoreBreakdown breakdown;
-                        float score = GetMatchScore(bind.psdItem, node, psdGeom, matchConfig, useMlScore, mlModel, rootRectTransform, cachedPsdData, out breakdown);
+                        PSDMatchGeometry.NodeGeom nodeGeom = GetCachedNodeGeom(node, rootRectTransform, nodeGeomCache);
+                        float distance = Vector2.Distance(nodeGeom.centerLocal, psdGeom.centerLocal);
+                        if (ShouldPruneByDistance(distance, matchConfig))
+                        {
+                            skippedSpatial++;
+                            continue;
+                        }
+
+                        // ── P2: 父级亲和力乘数 ────────────────────────────────────────
+                        // 如果此节点的父节点 == 已匹配的白膜父节点，乘以 parentAffinityBonus
+                        float parentAffinity = 1f;
+                        float hierarchyTotalMultiplier = 1f;
+                        if (matchedParentNode != null)
+                        {
+                            if (node.parent == matchedParentNode)
+                            {
+                                parentAffinity = matchConfig.parentAffinityBonus;
+                            }
+                            else if (node.IsChildOf(matchedParentNode))
+                            {
+                                parentAffinity = matchConfig.hierarchyDescendantAffinityBonus;
+                            }
+                            else
+                            {
+                                hierarchyTotalMultiplier = Mathf.Clamp01(matchConfig.hierarchyOutsideParentPenalty);
+                                hierarchyPenalized++;
+                            }
+                        }
+
+                        ScoreBreakdown breakdown = default;
+                        breakdown.core = CalculateScoreFromGeometry(nodeGeom, psdGeom, typeScore, matchConfig, parentAffinity, bind.psdItem, node);
+                        float score = ApplyHierarchyTotalMultiplier(ref breakdown, hierarchyTotalMultiplier);
                         if (score > 1f)
                         {
                             validMatrix[i, j] = true;
@@ -262,20 +421,47 @@ namespace PSDImporter
                     if (logCandidatesInLoop)
                     {
                         StringBuilder sb = new StringBuilder();
-                        sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) centerLocal=({psdGeom.centerLocal.x:F1},{psdGeom.centerLocal.y:F1}) size=({psdGeom.sizeLocal.x:F1},{psdGeom.sizeLocal.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot})");
+                        sb.AppendLine($"[Match] Item {bind.psdItem.pngName} (id:{bind.psdItem.id}, type:{bind.psdItem.uiType}) centerLocal=({psdGeom.centerLocal.x:F1},{psdGeom.centerLocal.y:F1}) size=({psdGeom.sizeLocal.x:F1},{psdGeom.sizeLocal.y:F1}) candidates={localCandidates.Count} skipped(type:{skippedType}, spatial:{skippedSpatial}, inactive:{skippedInactive}, occupied:{skippedOccupied}, root:{skippedRoot}) hierarchyPenalty={hierarchyPenalized}");
                         var top = localCandidates.OrderByDescending(c => c.score).Take(5).ToList();
                         for (int k = 0; k < top.Count; k++)
                         {
                             var cand = top[k];
                             var b = cand.breakdown;
-                            var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(cand.node, rootRectTransform);
-                            string mlInfo = b.mlUsed ? $" mlScore={cand.score:F1} mlProb={b.mlProb:F3}" : string.Empty;
+                            var nodeGeom = GetCachedNodeGeom(cand.node, rootRectTransform, nodeGeomCache);
                             string geomInfo = matchConfig.logMatchGeometry ? $" nodeCenterLocal=({nodeGeom.centerLocal.x:F1},{nodeGeom.centerLocal.y:F1}) nodeSizeLocal=({nodeGeom.sizeLocal.x:F1},{nodeGeom.sizeLocal.y:F1}) psdCenterLocal=({psdGeom.centerLocal.x:F1},{psdGeom.centerLocal.y:F1}) psdSizeLocal=({psdGeom.sizeLocal.x:F1},{psdGeom.sizeLocal.y:F1})" : string.Empty;
-                            sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy}{geomInfo} dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
+                            string affinityInfo = string.Empty;
+                            if (matchedParentNode != null)
+                            {
+                                if (cand.node.parent == matchedParentNode)
+                                {
+                                    affinityInfo = $" [parent x{matchConfig.parentAffinityBonus:F1}]";
+                                }
+                                else if (cand.node.IsChildOf(matchedParentNode))
+                                {
+                                    affinityInfo = $" [descendant x{matchConfig.hierarchyDescendantAffinityBonus:F1}]";
+                                }
+                                else
+                                {
+                                    affinityInfo = $" [outside x{matchConfig.hierarchyOutsideParentPenalty:F2}]";
+                                }
+                            }
+                            sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} {PSDMatchNodeFilter.FormatActiveState(cand.node.gameObject)}{geomInfo} dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} scoreDepth={b.scoreDepth:F0} scoreAnchor={b.scoreAnchor:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1},{b.weightedDepth:F1},{b.weightedAnchor:F1}) total={b.total:F1}{affinityInfo}");
                         }
                         Debug.Log(sb.ToString());
                     }
+
+                    bind.skippedTypeCandidates = skippedType;
+                    bind.skippedSpatialCandidates = skippedSpatial;
+                    bind.hierarchyPenalizedCandidates = hierarchyPenalized;
+                    totalSkippedSpatial += skippedSpatial;
+                    totalHierarchyPenalized += hierarchyPenalized;
                 }
+
+                if (logDetail)
+                {
+                    Debug.Log($"[Match] Candidate pruning summary: skippedSpatial={totalSkippedSpatial}, hierarchyPenalized={totalHierarchyPenalized}");
+                }
+
 
                 // ========================================================================
                 // Phase 3.5: High-Confidence Pre-Lock (Layered Matching)
@@ -284,14 +470,22 @@ namespace PSDImporter
                 // ========================================================================
                 if (matchConfig.preLockEnabled && pendingBinds.Count > 0 && nodeList.Count > 0)
                 {
+                    float effectivePreLockThreshold = GetEffectivePreLockThreshold(matchConfig, maxScore);
+                    if (logDetail)
+                    {
+                        Debug.Log($"[Match] PreLock threshold effective={effectivePreLockThreshold:F1} (configured={matchConfig.preLockThreshold:F1}, maxScore={maxScore:F1}, dynamic={matchConfig.preLockUseDynamicThreshold})");
+                    }
+
                     var preLocked = ApplyHighConfidencePreLock(
                         pendingBinds,
                         nodeList,
                         scoreMatrix,
                         validMatrix,
-                        matchConfig.preLockThreshold,
+                        effectivePreLockThreshold,
                         matchConfig.preLockColumnUniquenessRatio,
+                        matchConfig.preLockMinScoreGap,
                         perfectThreshold,
+                        matchConfig,
                         occupiedNodes,
                         matchedBindings,
                         logDetail);
@@ -316,6 +510,7 @@ namespace PSDImporter
                             if (!lockedNodeIndices.Contains(j))
                                 remainingNodes.Add(nodeList[j]);
                         }
+                        nodeGeomCache = BuildNodeGeomCache(remainingNodes, rootRectTransform);
 
                         // If everything was locked, skip Hungarian entirely
                         if (remainingBinds.Count == 0 || remainingNodes.Count == 0)
@@ -325,9 +520,12 @@ namespace PSDImporter
                                 Debug.Log($"[Match] All {pendingBinds.Count} pairs resolved by pre-lock, skipping Hungarian.");
                             }
                             // Early exit — all bindings are already set
-                            int unmatchedFinal = bindings.Count(b => b.unityNode == null);
-                            float unmatchedRateFinal = bindings.Count > 0 ? (float)unmatchedFinal / bindings.Count : 0f;
-                            Debug.Log($"[Match] Unmatched rate: {unmatchedFinal}/{bindings.Count} ({unmatchedRateFinal:P1})");
+                            ResolveStdPrefabBindings(stdPrefabBinds, targetRoot, cachedPsdData, matchConfig, occupiedNodes, matchedBindings, logDetail);
+                            LogUnmatchedSummary(bindings);
+                            if (logDetail)
+                            {
+                                PSDMatchLogExporter.Export(bindings, targetRoot, cachedPsdData, matchConfig);
+                            }
                             return;
                         }
 
@@ -383,6 +581,12 @@ namespace PSDImporter
                     {
                         bind.statusInfo = "No suitable node found";
                     }
+                    ResolveStdPrefabBindings(stdPrefabBinds, targetRoot, cachedPsdData, matchConfig, occupiedNodes, matchedBindings, logDetail);
+                    LogUnmatchedSummary(bindings);
+                    if (logDetail)
+                    {
+                        PSDMatchLogExporter.Export(bindings, targetRoot, cachedPsdData, matchConfig);
+                    }
                     return;
                 }
 
@@ -433,6 +637,7 @@ namespace PSDImporter
                         bind.unityNode = null;
                         bind.score = 0f;
                         bind.isConfirmed = false;
+                        SetUnmatchedMatchConfidence(bind, i, scoreMatrix, validMatrix);
                         bind.statusInfo = "Unmatched: invalid assignment";
                         continue;
                     }
@@ -442,6 +647,7 @@ namespace PSDImporter
                         bind.unityNode = null;
                         bind.score = 0f;
                         bind.isConfirmed = false;
+                        SetUnmatchedMatchConfidence(bind, i, scoreMatrix, validMatrix);
                         bind.statusInfo = "Unmatched: assigned to dummy";
                         continue;
                     }
@@ -451,6 +657,7 @@ namespace PSDImporter
                         bind.unityNode = null;
                         bind.score = 0f;
                         bind.isConfirmed = false;
+                        SetUnmatchedMatchConfidence(bind, i, scoreMatrix, validMatrix);
                         bind.statusInfo = "Unmatched: invalid candidate";
                         continue;
                     }
@@ -461,6 +668,7 @@ namespace PSDImporter
                         bind.unityNode = null;
                         bind.score = 0f;
                         bind.isConfirmed = false;
+                        SetUnmatchedMatchConfidence(bind, i, scoreMatrix, validMatrix);
                         bind.statusInfo = "Unmatched: node already occupied";
                         continue;
                     }
@@ -468,17 +676,21 @@ namespace PSDImporter
                     bind.unityNode = node;
                     bind.score = scoreMatrix[i, j];
                     bind.isIdMatched = false;
+                    SetMatchConfidence(bind, bind.score, i, j, scoreMatrix, validMatrix, matchConfig);
 
                     if (matchConfig.allowUnmatched && bind.score < matchConfig.minAcceptScore)
                     {
                         bind.unityNode = null;
                         bind.isConfirmed = false;
+                        SetUnmatchedMatchConfidence(bind, i, scoreMatrix, validMatrix);
                         bind.statusInfo = $"Unmatched: score {bind.score:F1} < minAcceptScore {matchConfig.minAcceptScore:F1}";
                         continue;
                     }
 
-                    bind.statusInfo = $"Score: {bind.score:F0}";
-                    if (bind.score > perfectThreshold)
+                    bind.statusInfo = bind.isLowConfidence
+                        ? $"Low confidence: score {bind.score:F0}, margin {bind.scoreMargin:F1}"
+                        : $"Score: {bind.score:F0}, margin {bind.scoreMargin:F1}";
+                    if (bind.score > perfectThreshold && !bind.isLowConfidence)
                     {
                         bind.isConfirmed = true;
                     }
@@ -490,11 +702,11 @@ namespace PSDImporter
                     {
                         ScoreBreakdown breakdown;
                         var psdGeom = PSDMatchGeometry.BuildPsdGeom(bind.psdItem, cachedPsdData.width, cachedPsdData.height);
-                        GetMatchScore(bind.psdItem, node, psdGeom, matchConfig, useMlScore, mlModel, rootRectTransform, cachedPsdData, out breakdown);
-                        var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(node, rootRectTransform);
-                        string mlInfo = breakdown.mlUsed ? $" mlScore={bind.score:F1} mlProb={breakdown.mlProb:F3}" : string.Empty;
+                        float typeScore = GetTypeMatchScore(node, bind.psdItem, matchConfig.typeCompatScore);
+                        GetMatchScore(bind.psdItem, node, psdGeom, matchConfig, rootRectTransform, out breakdown, typeScore);
+                        var nodeGeom = GetCachedNodeGeom(node, rootRectTransform, nodeGeomCache);
                         string geomInfo = matchConfig.logMatchGeometry ? $" nodeCenterLocal=({nodeGeom.centerLocal.x:F1},{nodeGeom.centerLocal.y:F1}) nodeSizeLocal=({nodeGeom.sizeLocal.x:F1},{nodeGeom.sizeLocal.y:F1}) psdCenterLocal=({psdGeom.centerLocal.x:F1},{psdGeom.centerLocal.y:F1}) psdSizeLocal=({psdGeom.sizeLocal.x:F1},{psdGeom.sizeLocal.y:F1})" : string.Empty;
-                        Debug.Log($"[Match] Result {bind.psdItem.pngName} -> {GetTransformPath(node)} score={bind.score:F1} dist={breakdown.distance:F1} diff=({breakdown.diffW:F1},{breakdown.diffH:F1}){geomInfo} w=({breakdown.weightedPos:F1},{breakdown.weightedSize:F1},{breakdown.weightedType:F1}){mlInfo}");
+                        Debug.Log($"[Match] Result {bind.psdItem.pngName} -> {GetTransformPath(node)} score={bind.score:F1} margin={bind.scoreMargin:F1} lowConfidence={bind.isLowConfidence} dist={breakdown.distance:F1} diff=({breakdown.diffW:F1},{breakdown.diffH:F1}){geomInfo} w=({breakdown.weightedPos:F1},{breakdown.weightedSize:F1},{breakdown.weightedType:F1})");
                     }
                 }
 
@@ -506,9 +718,8 @@ namespace PSDImporter
                     }
                 }
 
-                int unmatchedCount = bindings.Count(b => b.unityNode == null);
-                float unmatchedRate = bindings.Count > 0 ? (float)unmatchedCount / bindings.Count : 0f;
-                Debug.Log($"[Match] Unmatched rate: {unmatchedCount}/{bindings.Count} ({unmatchedRate:P1})");
+                ResolveStdPrefabBindings(stdPrefabBinds, targetRoot, cachedPsdData, matchConfig, occupiedNodes, matchedBindings, logDetail);
+                LogUnmatchedSummary(bindings);
 
                 // Export detailed match log to JSON when showDetailedLog is enabled
                 if (logDetail)
@@ -531,7 +742,9 @@ namespace PSDImporter
             PSDData cachedPsdData,
             PSDBindingData bindingAsset,
             PSDImportConfig config,
-            string psdPath)
+            string psdPath,
+            bool storeBindingObjectReferences = true,
+            bool saveAssets = true)
         {
             if (targetRoot == null || cachedPsdData == null || bindings == null)
             {
@@ -539,33 +752,238 @@ namespace PSDImporter
             }
 
             Undo.RegisterFullObjectHierarchyUndo(targetRoot, "Apply Visual Bindings");
+            PSDImageReuseLogStore.Reset();
+
+            // ── P1: 构建 PSD id → 已匹配白膜 Transform 的映射（用于自动创建时查父节点） ──
+            bool autoCreate = config == null || config.autoCreateUnmatched;
+            Dictionary<int, Transform> psdIdToNode = new Dictionary<int, Transform>();
+            foreach (var b in bindings)
+            {
+                if (b.unityNode != null)
+                    RegisterHierarchyNode(psdIdToNode, b.psdItem, b.unityNode, cachedPsdData);
+            }
 
             int count = 0;
+            int autoCreatedCount = 0;
+
             for (int i = 0; i < bindings.Count; i++)
             {
                 var bind = bindings[i];
-                if (bind.unityNode == null)
+
+                bool treatAsStdReuse = bind.unityNode != null &&
+                                       (bind.stdPrefabMode == StdPrefabApplyMode.ReuseExisting ||
+                                        (bind.stdPrefabMode == StdPrefabApplyMode.None &&
+                                         config != null &&
+                                         PSDStdPrefabSupport.HasAnyStdPrefabMatchEnabled(config) &&
+                                         PSDStdPrefabSupport.IsStdPrefabRoot(bind.psdItem) &&
+                                         PSDStdPrefabSupport.IsReservedStdPrefabNode(bind.unityNode as RectTransform, config)));
+
+                if (treatAsStdReuse)
+                {
+                    bind.stdPrefabMode = StdPrefabApplyMode.ReuseExisting;
+                    PSDCreateor.RefreshStdPrefabRoot(bind.unityNode.gameObject, bind.psdItem, cachedPsdData, config);
+                    SaveBindingIfNeeded(bindingAsset, bind, targetRoot.transform, storeBindingObjectReferences);
+                    count++;
+                    RegisterHierarchyNode(psdIdToNode, bind.psdItem, bind.unityNode, cachedPsdData);
+                    continue;
+                }
+
+                if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending)
+                {
+                    Transform stdParent = ResolveParentTransform(targetRoot.transform, bind.psdItem, cachedPsdData, psdIdToNode);
+                    GameObject stdPrefabGo = PSDStdPrefabSupport.InstantiatePendingPrefab(bind, stdParent);
+                    if (stdPrefabGo != null)
+                    {
+                        Undo.RegisterCreatedObjectUndo(stdPrefabGo, "Instantiate Standard Prefab");
+                        PSDCreateor.RefreshStdPrefabRoot(stdPrefabGo, bind.psdItem, cachedPsdData, config);
+                        bind.unityNode = stdPrefabGo.transform;
+                        bind.isAutoCreated = true;
+                        bind.isConfirmed = true;
+                        bind.statusInfo = $"Std prefab instantiated under '{stdParent.name}'";
+                        SaveBindingIfNeeded(bindingAsset, bind, targetRoot.transform, storeBindingObjectReferences);
+                        RegisterHierarchyNode(psdIdToNode, bind.psdItem, bind.unityNode, cachedPsdData);
+                        autoCreatedCount++;
+                        count++;
+                    }
+                    else
+                    {
+                        bind.statusInfo = $"Std prefab missing: {bind.stdPrefabAssetPath}";
+                    }
+                    continue;
+                }
+
+                // ── 正常匹配路径 ─────────────────────────────────────────────────────
+                if (bind.unityNode != null)
+                {
+                    PSDCreateor.RefreshNode(bind.unityNode.gameObject, bind.psdItem, cachedPsdData, true, config);
+                    SaveBindingIfNeeded(bindingAsset, bind, targetRoot.transform, storeBindingObjectReferences);
+                    count++;
+                    // 更新映射（RefreshNode 可能未改变 Transform，但确保最新）
+                    RegisterHierarchyNode(psdIdToNode, bind.psdItem, bind.unityNode, cachedPsdData);
+                    continue;
+                }
+
+                // ── P1: Unmatched → 自动创建节点 ──────────────────────────────────
+                if (!autoCreate) continue;
+
+                if (PSDScrollRectUtility.IsScrollRectRoot(bind.psdItem))
+                {
+                    bind.statusInfo = "Unmatched ScrollRect root: restore mode does not auto-create scroll structures";
+                    continue;
+                }
+
+                if (PSDScrollRectUtility.IsInsideScrollRect(bind.psdItem, cachedPsdData) &&
+                    PSDScrollRectUtility.ResolveParentForItem(bind.psdItem, cachedPsdData, psdIdToNode) == null)
+                {
+                    bind.statusInfo = "Skipped auto-create: ScrollRect root/content is not matched";
+                    continue;
+                }
+
+                // 找父节点
+                Transform parentTransform = ResolveParentTransform(targetRoot.transform, bind.psdItem, cachedPsdData, psdIdToNode);
+
+                // 创建新 GameObject
+                string nodeName = !string.IsNullOrEmpty(bind.psdItem.cleanName)
+                    ? bind.psdItem.cleanName
+                    : (!string.IsNullOrEmpty(bind.psdItem.pngName) ? bind.psdItem.pngName : "AutoNode");
+                GameObject newGo = new GameObject(nodeName);
+                newGo.transform.SetParent(parentTransform, false);
+                Undo.RegisterCreatedObjectUndo(newGo, "Auto Create Unmatched Node");
+
+                // 确保有 RectTransform
+                if (newGo.GetComponent<RectTransform>() == null)
+                {
+                    newGo.AddComponent<RectTransform>();
+                }
+
+                // 初始化节点内容
+                PSDCreateor.RefreshNode(newGo, bind.psdItem, cachedPsdData, true, config);
+
+                // 回写到 bind
+                bind.unityNode = newGo.transform;
+                bind.isAutoCreated = true;
+                bind.isConfirmed = false; // 自动创建不计为已确认绑定（避免写入持久化）
+                bind.statusInfo = $"Auto-created under '{parentTransform.name}'";
+
+                // 更新父节点映射，以便同级别后续节点能找到当前新建节点作父
+                RegisterHierarchyNode(psdIdToNode, bind.psdItem, newGo.transform, cachedPsdData);
+
+                autoCreatedCount++;
+                count++;
+            }
+
+            for (int i = 0; i < bindings.Count; i++)
+            {
+                var bind = bindings[i];
+                if (bind == null || bind.unityNode == null)
                 {
                     continue;
                 }
 
-                PSDCreateor.RefreshNode(bind.unityNode.gameObject, bind.psdItem, cachedPsdData, true, config);
-                if (bindingAsset != null && bind.isConfirmed)
-                {
-                    bindingAsset.SaveBinding(bind.psdItem.id, bind.psdItem.pngName, bind.unityNode.gameObject);
-                }
-                count++;
+                PSDCreateor.ApplyPsdLayoutChildOrder(bind.unityNode, bind.psdItem, cachedPsdData);
+            }
+
+            if (autoCreatedCount > 0)
+            {
+                Debug.Log($"[ApplyBindings] Auto-created {autoCreatedCount} new nodes for unmatched PSD items.");
             }
 
             if (bindingAsset != null)
             {
                 EditorUtility.SetDirty(bindingAsset);
             }
-            AssetDatabase.SaveAssets();
+            if (saveAssets)
+            {
+                AssetDatabase.SaveAssets();
+            }
 
-            // ML auto learn is temporarily disabled.
+            if (config == null || config.showDetailedLog)
+            {
+                Debug.Log("[PSD ImageReuse] " + PSDImageReuseLogStore.BuildSummary());
+            }
 
             return count;
+        }
+
+        private static void ResolveStdPrefabBindings(
+            List<BindingPairViewModel> stdPrefabBinds,
+            GameObject targetRoot,
+            PSDData cachedPsdData,
+            PSDImportConfig config,
+            HashSet<Transform> occupiedNodes,
+            HashSet<BindingPairViewModel> matchedBindings,
+            bool logDetail)
+        {
+            if (stdPrefabBinds == null || stdPrefabBinds.Count == 0)
+            {
+                return;
+            }
+
+            Dictionary<int, Transform> psdIdToMatchedNode = new Dictionary<int, Transform>();
+            foreach (BindingPairViewModel binding in matchedBindings)
+            {
+                if (binding != null && binding.unityNode != null)
+                {
+                    RegisterHierarchyNode(psdIdToMatchedNode, binding.psdItem, binding.unityNode, cachedPsdData);
+                }
+            }
+
+            PSDStdPrefabSupport.ResolveStdPrefabBindings(
+                stdPrefabBinds,
+                targetRoot,
+                cachedPsdData,
+                config,
+                occupiedNodes,
+                matchedBindings,
+                psdIdToMatchedNode,
+                logDetail);
+        }
+
+        private static void LogUnmatchedSummary(List<BindingPairViewModel> bindings)
+        {
+            int unmatchedCount = bindings.Count(b => b.unityNode == null && b.stdPrefabMode != StdPrefabApplyMode.InstantiatePending);
+            int pendingInstantiateCount = bindings.Count(b => b.stdPrefabMode == StdPrefabApplyMode.InstantiatePending);
+            float unmatchedRate = bindings.Count > 0 ? (float)unmatchedCount / bindings.Count : 0f;
+            Debug.Log($"[Match] Unmatched rate: {unmatchedCount}/{bindings.Count} ({unmatchedRate:P1}), stdInstantiatePending={pendingInstantiateCount}");
+        }
+
+        private static void SaveBindingIfNeeded(PSDBindingData bindingAsset, BindingPairViewModel bind, Transform root, bool storeObjectReference)
+        {
+            if (bindingAsset == null || bind == null || bind.unityNode == null)
+            {
+                return;
+            }
+
+            if (bind.isConfirmed || bind.stdPrefabMode != StdPrefabApplyMode.None)
+            {
+                bindingAsset.SaveBinding(bind.psdItem.id, bind.psdItem.pngName, bind.unityNode.gameObject, root, storeObjectReference);
+            }
+        }
+
+        private static Transform ResolveParentTransform(Transform defaultParent, int parentNodeId, Dictionary<int, Transform> psdIdToNode)
+        {
+            if (parentNodeId > 0 && psdIdToNode != null && psdIdToNode.TryGetValue(parentNodeId, out Transform found) && found != null)
+            {
+                return found;
+            }
+
+            return defaultParent;
+        }
+
+        private static Transform ResolveParentTransform(Transform defaultParent, PicData item, PSDData psdData, Dictionary<int, Transform> psdIdToNode)
+        {
+            Transform scrollParent = PSDScrollRectUtility.ResolveParentForItem(item, psdData, psdIdToNode);
+            if (scrollParent != null)
+            {
+                return scrollParent;
+            }
+
+            return ResolveParentTransform(defaultParent, item.parentNodeId, psdIdToNode);
+        }
+
+        private static void RegisterHierarchyNode(Dictionary<int, Transform> psdIdToNode, PicData item, Transform node, PSDData psdData)
+        {
+            PSDScrollRectUtility.RegisterHierarchyNode(item, node, psdData, psdIdToNode);
         }
 
         private static void LogTopCandidatesForBind(
@@ -574,8 +992,6 @@ namespace PSDImporter
             Transform rootTransform,
             PSDData cachedPsdData,
             PSDImportConfig config,
-            bool useMlScore,
-            PSDMatchModel mlModel,
             int skippedRoot,
             int skippedInactive,
             int skippedOccupied)
@@ -597,14 +1013,15 @@ namespace PSDImporter
             for (int j = 0; j < nodes.Count; j++)
             {
                 var node = nodes[j];
-                if (!IsTypeMatch(node, bind.psdItem.uiType))
+                float typeScore = GetTypeMatchScore(node, bind.psdItem, config.typeCompatScore);
+                if (typeScore <= 0f)
                 {
                     skippedType++;
                     continue;
                 }
 
                 ScoreBreakdown breakdown;
-                float score = GetMatchScore(bind.psdItem, node, psdGeom, config, useMlScore, mlModel, rootRect, cachedPsdData, out breakdown);
+                float score = GetMatchScore(bind.psdItem, node, psdGeom, config, rootRect, out breakdown, typeScore);
                 if (score > 1f)
                 {
                     localCandidates.Add(new MatchCandidate
@@ -624,14 +1041,21 @@ namespace PSDImporter
                 var cand = top[k];
                 var b = cand.breakdown;
                 var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(cand.node, rootRect);
-                string mlInfo = b.mlUsed ? $" mlScore={cand.score:F1} mlProb={b.mlProb:F3}" : string.Empty;
                 string geomInfo = config.logMatchGeometry ? $" nodeCenterLocal=({nodeGeom.centerLocal.x:F1},{nodeGeom.centerLocal.y:F1}) nodeSizeLocal=({nodeGeom.sizeLocal.x:F1},{nodeGeom.sizeLocal.y:F1}) psdCenterLocal=({psdGeom.centerLocal.x:F1},{psdGeom.centerLocal.y:F1}) psdSizeLocal=({psdGeom.sizeLocal.x:F1},{psdGeom.sizeLocal.y:F1})" : string.Empty;
-                sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} active={cand.node.gameObject.activeInHierarchy}{geomInfo} dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1}) total={b.total:F1}{mlInfo}");
+                sb.AppendLine($"  #{k + 1} {GetTransformPath(cand.node)} {PSDMatchNodeFilter.FormatActiveState(cand.node.gameObject)}{geomInfo} dist={b.distance:F1} diff=({b.diffW:F1},{b.diffH:F1}) scorePos={b.scorePos:F1} scoreSize={b.scoreSize:F1} scoreType={b.scoreType:F0} scoreDepth={b.scoreDepth:F0} scoreAnchor={b.scoreAnchor:F0} w=({b.weightedPos:F1},{b.weightedSize:F1},{b.weightedType:F1},{b.weightedDepth:F1},{b.weightedAnchor:F1}) total={b.total:F1}");
             }
             Debug.Log(sb.ToString());
         }
 
-        private static float CalculateMatchScoreDetailed(PicData item, RectTransform node, PSDMatchGeometry.PsdGeom psdGeom, RectTransform root, PSDImportConfig config, out ScoreBreakdown breakdown)
+        private static float CalculateMatchScoreDetailed(
+            PicData item,
+            RectTransform node,
+            PSDMatchGeometry.PsdGeom psdGeom,
+            RectTransform root,
+            PSDImportConfig config,
+            out ScoreBreakdown breakdown,
+            float parentAffinity = 1f,
+            float typeScoreOverride = -1f)
         {
             breakdown = new ScoreBreakdown();
             // PicData is a struct, use default comparison for value type null check
@@ -641,18 +1065,23 @@ namespace PSDImporter
             }
 
             var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(node, root);
-            bool typeMatch = IsTypeMatch(node, item.uiType);
-            breakdown.core = CalculateScoreFromGeometry(nodeGeom, psdGeom, typeMatch, config);
+            float typeScore = typeScoreOverride >= 0f
+                ? typeScoreOverride
+                : GetTypeMatchScore(node, item, config.typeCompatScore);
+            breakdown.core = CalculateScoreFromGeometry(nodeGeom, psdGeom, typeScore, config, parentAffinity, item, node);
             return breakdown.total;
         }
 
         internal static PSDMatchScoring.ScoreBreakdown CalculateScoreFromGeometry(
             PSDMatchGeometry.NodeGeom nodeGeom,
             PSDMatchGeometry.PsdGeom psdGeom,
-            bool isTypeMatch,
-            PSDImportConfig config)
+            float typeMatchScore,
+            PSDImportConfig config,
+            float parentAffinity = 1f,
+            PicData item = default,
+            RectTransform node = null)
         {
-            var input = PSDMatchScoring.ScoringInput.FromConfig(nodeGeom, psdGeom, isTypeMatch, config);
+            var input = PSDMatchScoring.ScoringInput.FromConfigForItem(nodeGeom, psdGeom, typeMatchScore, config, item, node, parentAffinity);
             return PSDMatchScoring.Evaluate(input);
         }
 
@@ -661,40 +1090,304 @@ namespace PSDImporter
             RectTransform node,
             PSDMatchGeometry.PsdGeom psdGeom,
             PSDImportConfig config,
-            bool useMlScore,
-            PSDMatchModel mlModel,
             RectTransform rootTransform,
-            PSDData cachedPsdData,
-            out ScoreBreakdown breakdown)
+            out ScoreBreakdown breakdown,
+            float typeScore = 100f,
+            float parentAffinity = 1f)
         {
-            if (!useMlScore || mlModel == null)
-            {
-                return CalculateMatchScoreDetailed(item, node, psdGeom, rootTransform, config, out breakdown);
-            }
-
-            float maxDist = mlModel.maxDistanceError > 0f ? mlModel.maxDistanceError : config.maxDistanceError;
-            float maxSize = mlModel.maxSizeDiff > 0f ? mlModel.maxSizeDiff : config.maxSizeDiff;
-            int maxDepth = mlModel.maxDepthDiff > 0 ? mlModel.maxDepthDiff : (config != null && config.mlConfig != null ? config.mlConfig.maxDepthDiff : 10);
-
-            float[] x = PSDMatchFeatureExtractor.ExtractFeatures(item, node, rootTransform, cachedPsdData.width, cachedPsdData.height, maxDist, maxSize, maxDepth);
-            float prob = PSDMatchML.Predict(mlModel, x);
-            float score = prob * 100f;
-
-            CalculateMatchScoreDetailed(item, node, psdGeom, rootTransform, config, out breakdown);
-            breakdown.mlProb = prob;
-            breakdown.mlUsed = true;
-            return score;
+            return CalculateMatchScoreDetailed(item, node, psdGeom, rootTransform, config, out breakdown, parentAffinity, typeScore);
         }
 
-        private static bool IsTypeMatch(Transform node, string psdType)
+        /// <summary>
+        /// 类型匹配分：100=完全匹配，0&lt;=compatScore=兼容匹配（如Text白膜↔Image美术字），0=不兼容
+        /// </summary>
+        private static float GetTypeMatchScore(Transform node, PicData item, float compatScore)
         {
-            if (psdType == "Button") return node.GetComponent<Button>() != null;
-            if (psdType == "Text") return node.GetComponent<Text>() != null;
-            if (psdType == "RawImage") return node.GetComponent<RawImage>() != null;
-            if (psdType == "Image") return node.GetComponent<Image>() != null && node.GetComponent<Button>() == null;
-            if (psdType == "Layout") return node.GetComponent<LayoutGroup>() != null;
-            if (psdType == "Item") return node.GetComponent<LayoutGroup>() == null && node.GetComponentInParent<LayoutGroup>() != null;
+            return PSDMatchTypeUtility.GetTypeMatchScore(node, item, compatScore);
+        }
+
+        private static float GetLayoutTypeMatchScore(Transform node, string layoutType)
+        {
+            return PSDMatchTypeUtility.GetLayoutTypeMatchScore(node, layoutType);
+        }
+
+        private static Dictionary<RectTransform, PSDMatchGeometry.NodeGeom> BuildNodeGeomCache(List<RectTransform> nodes, RectTransform root)
+        {
+            var cache = new Dictionary<RectTransform, PSDMatchGeometry.NodeGeom>();
+            if (nodes == null || root == null)
+            {
+                return cache;
+            }
+
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                RectTransform node = nodes[i];
+                if (node != null && !cache.ContainsKey(node))
+                {
+                    cache[node] = PSDMatchGeometry.ExtractNodeGeom(node, root);
+                }
+            }
+
+            return cache;
+        }
+
+        private static PSDMatchGeometry.NodeGeom GetCachedNodeGeom(RectTransform node, RectTransform root, Dictionary<RectTransform, PSDMatchGeometry.NodeGeom> cache)
+        {
+            if (node == null)
+            {
+                return default;
+            }
+
+            if (cache != null && cache.TryGetValue(node, out PSDMatchGeometry.NodeGeom cached))
+            {
+                return cached;
+            }
+
+            PSDMatchGeometry.NodeGeom geom = PSDMatchGeometry.ExtractNodeGeom(node, root);
+            if (cache != null)
+            {
+                cache[node] = geom;
+            }
+
+            return geom;
+        }
+
+        private static bool ShouldPruneByDistance(float distance, PSDImportConfig config)
+        {
+            if (config == null || !config.enableCandidatePruning || config.maxDistanceError <= 0f)
+            {
+                return false;
+            }
+
+            float multiplier = Mathf.Max(0.1f, config.candidateDistanceMultiplier);
+            return distance > config.maxDistanceError * multiplier;
+        }
+
+        private static float ApplyHierarchyTotalMultiplier(ref ScoreBreakdown breakdown, float multiplier)
+        {
+            if (Mathf.Approximately(multiplier, 1f))
+            {
+                return breakdown.total;
+            }
+
+            multiplier = Mathf.Clamp01(multiplier);
+            breakdown.core.total *= multiplier;
+            return breakdown.total;
+        }
+
+        private static float GetEffectivePreLockThreshold(PSDImportConfig config, float maxScore)
+        {
+            if (config == null || !config.preLockUseDynamicThreshold)
+            {
+                return config != null ? config.preLockThreshold : 0f;
+            }
+
+            float dynamicThreshold = Mathf.Max(0f, maxScore) * Mathf.Clamp01(config.preLockDynamicRatio);
+            return Mathf.Max(config.preLockDynamicMinThreshold, dynamicThreshold);
+        }
+
+        private static bool IsIdHistoryGeometryAcceptable(
+            BindingPairViewModel bind,
+            RectTransform savedNode,
+            RectTransform rootRect,
+            PSDData psdData,
+            out string reason)
+        {
+            reason = string.Empty;
+            if (bind == null || savedNode == null || rootRect == null || psdData == null)
+            {
+                reason = "missing geometry input";
+                return false;
+            }
+
+            PSDMatchGeometry.PsdGeom psdGeom = PSDMatchGeometry.BuildPsdGeom(bind.psdItem, psdData.width, psdData.height);
+            PSDMatchGeometry.NodeGeom nodeGeom = PSDMatchGeometry.ExtractNodeGeom(savedNode, rootRect);
+            float iou = CalculateIou(psdGeom.rectMinLocal, psdGeom.rectMaxLocal, nodeGeom.rectMinLocal, nodeGeom.rectMaxLocal);
+            float centerDistance = Vector2.Distance(psdGeom.centerLocal, nodeGeom.centerLocal);
+            float sizeError = CalculateMaxSizeErrorRatio(psdGeom.sizeLocal, nodeGeom.sizeLocal);
+
+            bool acceptable = iou >= IdHistoryMinIou ||
+                              (centerDistance <= IdHistoryMaxCenterDistance &&
+                               sizeError <= IdHistoryMaxSizeErrorRatio);
+            if (!acceptable)
+            {
+                reason = $"iou={iou:F2}, center={centerDistance:F1}, sizeRatio={sizeError:F2}, geom={nodeGeom.geometrySource}";
+            }
+
+            return acceptable;
+        }
+
+        private static bool IsInsideMatchedStdPrefab(RectTransform node, HashSet<BindingPairViewModel> matchedBindings)
+        {
+            if (node == null || matchedBindings == null || matchedBindings.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (BindingPairViewModel bind in matchedBindings)
+            {
+                if (bind == null ||
+                    bind.stdPrefabMode != StdPrefabApplyMode.ReuseExisting ||
+                    bind.unityNode == null ||
+                    node.transform == bind.unityNode)
+                {
+                    continue;
+                }
+
+                if (node.transform.IsChildOf(bind.unityNode))
+                {
+                    return true;
+                }
+            }
+
             return false;
+        }
+
+        private static float CalculateIou(Vector2 aMin, Vector2 aMax, Vector2 bMin, Vector2 bMax)
+        {
+            float ixMin = Mathf.Max(aMin.x, bMin.x);
+            float iyMin = Mathf.Max(aMin.y, bMin.y);
+            float ixMax = Mathf.Min(aMax.x, bMax.x);
+            float iyMax = Mathf.Min(aMax.y, bMax.y);
+            float iw = Mathf.Max(0f, ixMax - ixMin);
+            float ih = Mathf.Max(0f, iyMax - iyMin);
+            float intersection = iw * ih;
+            float aArea = Mathf.Max(0f, aMax.x - aMin.x) * Mathf.Max(0f, aMax.y - aMin.y);
+            float bArea = Mathf.Max(0f, bMax.x - bMin.x) * Mathf.Max(0f, bMax.y - bMin.y);
+            float union = aArea + bArea - intersection;
+            return union > 0f ? intersection / union : 0f;
+        }
+
+        private static float CalculateMaxSizeErrorRatio(Vector2 expected, Vector2 actual)
+        {
+            float relW = Mathf.Abs(actual.x - expected.x) / Mathf.Max(1f, Mathf.Abs(expected.x));
+            float relH = Mathf.Abs(actual.y - expected.y) / Mathf.Max(1f, Mathf.Abs(expected.y));
+            return Mathf.Max(relW, relH);
+        }
+
+        private static void ResetMatchDiagnostics(BindingPairViewModel bind, bool clearHistoryDiagnostics = true)
+        {
+            if (bind == null)
+            {
+                return;
+            }
+
+            bind.bestCandidateScore = 0f;
+            bind.secondBestCandidateScore = 0f;
+            bind.scoreMargin = 0f;
+            bind.isLowConfidence = false;
+            bind.skippedTypeCandidates = 0;
+            bind.skippedSpatialCandidates = 0;
+            bind.hierarchyPenalizedCandidates = 0;
+            bind.isPreLocked = false;
+            if (clearHistoryDiagnostics)
+            {
+                bind.idHistoryRejected = false;
+                bind.idHistoryRejectedPath = null;
+                bind.idHistoryRejectReason = null;
+            }
+            bind.stdPrefabFailureReason = null;
+            if (bind.stdPrefabCandidates == null)
+            {
+                bind.stdPrefabCandidates = new List<StdPrefabCandidateViewModel>();
+            }
+            else
+            {
+                bind.stdPrefabCandidates.Clear();
+            }
+        }
+
+        private static void SetFixedMatchConfidence(BindingPairViewModel bind, float score)
+        {
+            if (bind == null)
+            {
+                return;
+            }
+
+            bind.bestCandidateScore = score;
+            bind.secondBestCandidateScore = 0f;
+            bind.scoreMargin = score;
+            bind.isLowConfidence = false;
+        }
+
+        private static void SetUnmatchedMatchConfidence(BindingPairViewModel bind, int rowIndex, float[,] scoreMatrix, bool[,] validMatrix)
+        {
+            if (bind == null)
+            {
+                return;
+            }
+
+            GetRowTopScores(rowIndex, -1, scoreMatrix, validMatrix, out float best, out float second, out _);
+            bind.bestCandidateScore = best;
+            bind.secondBestCandidateScore = second;
+            bind.scoreMargin = 0f;
+            bind.isLowConfidence = false;
+        }
+
+        private static void SetMatchConfidence(
+            BindingPairViewModel bind,
+            float selectedScore,
+            int rowIndex,
+            int selectedCol,
+            float[,] scoreMatrix,
+            bool[,] validMatrix,
+            PSDImportConfig config)
+        {
+            if (bind == null)
+            {
+                return;
+            }
+
+            GetRowTopScores(rowIndex, selectedCol, scoreMatrix, validMatrix, out float best, out float second, out float bestAlternative);
+            bind.bestCandidateScore = best;
+            bind.secondBestCandidateScore = second;
+            bind.scoreMargin = bestAlternative > 0f ? selectedScore - bestAlternative : selectedScore;
+            float lowConfidenceMargin = config != null ? Mathf.Max(0f, config.lowConfidenceMargin) : 0f;
+            bind.isLowConfidence = selectedScore > 0f && bind.scoreMargin < lowConfidenceMargin;
+        }
+
+        private static void GetRowTopScores(
+            int rowIndex,
+            int selectedCol,
+            float[,] scoreMatrix,
+            bool[,] validMatrix,
+            out float best,
+            out float second,
+            out float bestAlternative)
+        {
+            best = 0f;
+            second = 0f;
+            bestAlternative = 0f;
+
+            if (scoreMatrix == null || validMatrix == null || rowIndex < 0 || rowIndex >= scoreMatrix.GetLength(0))
+            {
+                return;
+            }
+
+            int columns = scoreMatrix.GetLength(1);
+            for (int j = 0; j < columns; j++)
+            {
+                if (!validMatrix[rowIndex, j])
+                {
+                    continue;
+                }
+
+                float score = scoreMatrix[rowIndex, j];
+                if (score > best)
+                {
+                    second = best;
+                    best = score;
+                }
+                else if (score > second)
+                {
+                    second = score;
+                }
+
+                if (j != selectedCol && score > bestAlternative)
+                {
+                    bestAlternative = score;
+                }
+            }
         }
 
         /// <summary>
@@ -717,7 +1410,9 @@ namespace PSDImporter
             bool[,] validMatrix,
             float threshold,
             float columnRatio,
+            float minScoreGap,
             float perfectThreshold,
+            PSDImportConfig config,
             HashSet<Transform> occupiedNodes,
             HashSet<BindingPairViewModel> matchedBindings,
             bool logDetail)
@@ -730,22 +1425,30 @@ namespace PSDImporter
 
             // --- Step 1: Row scan — find best candidate per row ---
             float[] rowBestScore = new float[rowCount];
+            float[] rowSecondScore = new float[rowCount];
             int[] rowBestCol = new int[rowCount];
             bool[] rowPassesThreshold = new bool[rowCount];
 
             for (int i = 0; i < rowCount; i++)
             {
                 rowBestScore[i] = -1f;
+                rowSecondScore[i] = 0f;
                 rowBestCol[i] = -1;
                 for (int j = 0; j < nodeList.Count; j++)
                 {
                     if (validMatrix[i, j] && scoreMatrix[i, j] > rowBestScore[i])
                     {
+                        rowSecondScore[i] = Mathf.Max(0f, rowBestScore[i]);
                         rowBestScore[i] = scoreMatrix[i, j];
                         rowBestCol[i] = j;
                     }
+                    else if (validMatrix[i, j] && scoreMatrix[i, j] > rowSecondScore[i])
+                    {
+                        rowSecondScore[i] = scoreMatrix[i, j];
+                    }
                 }
-                rowPassesThreshold[i] = rowBestCol[i] >= 0 && rowBestScore[i] >= threshold;
+                float rowGap = rowBestScore[i] - rowSecondScore[i];
+                rowPassesThreshold[i] = rowBestCol[i] >= 0 && rowBestScore[i] >= threshold && rowGap >= minScoreGap;
             }
 
             // --- Step 2 & 3: Column uniqueness + contention detection ---
@@ -815,14 +1518,16 @@ namespace PSDImporter
                 var bind = pendingBinds[i];
                 var node = nodeList[col];
 
-                bool confirmed = score > perfectThreshold;
-                string reason = string.Format("PreLock exclusive_optimal score={0:F0}", score);
+                SetMatchConfidence(bind, score, i, col, scoreMatrix, validMatrix, config);
+                bool confirmed = score > perfectThreshold && !bind.isLowConfidence;
+                string reason = string.Format("PreLock exclusive_optimal score={0:F0} margin={1:F1}", score, bind.scoreMargin);
 
                 bind.unityNode = node.transform;
                 bind.score = score;
                 bind.isConfirmed = confirmed;
                 bind.statusInfo = reason;
                 bind.isIdMatched = false;
+                bind.isPreLocked = true;
                 matchedBindings.Add(bind);
                 occupiedNodes.Add(node.transform);
 

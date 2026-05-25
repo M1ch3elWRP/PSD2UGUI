@@ -5,6 +5,8 @@
   "weightPosition": 0.7,
   "weightSize": 0.2,
   "weightType": 0.1,
+  "weightDepth": 0.3,
+  "weightAnchor": 0.1,
   "cases": [
     {
       "name": "near-perfect-image",

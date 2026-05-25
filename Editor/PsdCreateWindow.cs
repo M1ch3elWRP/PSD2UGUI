@@ -12,16 +12,25 @@ namespace PSDImporter
         [MenuItem("PSDTools/Create UI From PSD", priority = 0)]
         public static void ShowWindow()
         {
-            var window = GetWindow<PsdCreateWindow>("PSD Create");
-            window.minSize = new Vector2(380, 240);
-            window.Show();
+            PSDEditorWindowUtility.ShowCenteredUtility<PsdCreateWindow>(
+                "PSD Create",
+                new Vector2(420f, 280f),
+                new Vector2(380f, 240f));
+            Debug.Log("[PSDTools] Opened PSD Create window.");
         }
 
         private void OnEnable()
         {
-            if (config == null)
+            try
             {
-                config = PSDImportWorkflow.FindDefaultConfigAsset();
+                if (config == null)
+                {
+                    config = PSDImportWorkflow.FindDefaultConfigAsset();
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogException(ex);
             }
         }
 
@@ -64,10 +73,20 @@ namespace PSDImporter
 
         private void ExecuteCreate()
         {
-            bool success = PSDImportWorkflow.TryCreate(psdDataFile, config, out string message);
+            bool success = PSDImportWorkflow.TryCreate(psdDataFile, config, out string message, out GameObject root);
             if (success)
             {
                 ShowNotification(new GUIContent(message));
+
+                bool autoFitGroups = EditorUtility.DisplayDialog("创建完成",
+                    "创建已应用。\n是否自动调整 [空节点/组节点] 的位置？\n\n这会将所有空父节点移动到其子节点的中心，解决坐标偏移问题，利于分辨率适配。",
+                    "调整 (推荐)", "跳过");
+
+                if (autoFitGroups && root != null)
+                {
+                    PSDGroupTool.AlignGroups(root.transform);
+                    Debug.Log("<color=green>[PSDTools] 组节点坐标已重置到内容中心。</color>");
+                }
                 return;
             }
 

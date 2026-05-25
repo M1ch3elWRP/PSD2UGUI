@@ -33,8 +33,9 @@ namespace PSDImporter
                    path.EndsWith(PsDataExtension, StringComparison.OrdinalIgnoreCase);
         }
 
-        public static bool TryCreate(UnityObject psdDataAsset, PSDImportConfig config, out string message)
+        public static bool TryCreate(UnityObject psdDataAsset, PSDImportConfig config, out string message, out GameObject root)
         {
+            root = null;
             if (!TryLoadData(psdDataAsset, out PSDData psdData, out message))
             {
                 return false;
@@ -43,7 +44,8 @@ namespace PSDImporter
             PSDImportConfig runtimeConfig = ResolveRuntimeConfig(config, out PSDImportConfig tempConfig);
             try
             {
-                PSDCreateor.CreateUGUI_GenerateMode(psdData, runtimeConfig);
+                RectTransform rootRectTrans = PSDCreateor.CreateUGUI_GenerateMode(psdData, runtimeConfig);
+                root = rootRectTrans != null ? rootRectTrans.gameObject : null;
                 message = $"创建完成，共处理 {psdData.listPngData.Count} 个图层。";
                 return true;
             }

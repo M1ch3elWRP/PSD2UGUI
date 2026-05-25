@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace PSDImporter
 {
@@ -39,17 +38,19 @@ namespace PSDImporter
 
             var nodeGeom = PSDMatchGeometry.ExtractNodeGeom(nodeRect, root);
             var psdGeom = PSDMatchGeometry.BuildPsdGeom(item, psdWidth, psdHeight);
-            bool typeMatch = IsTypeMatch(node, item.uiType);
-            return CalculateMatchScoreFromGeometry(nodeGeom, psdGeom, typeMatch, config);
+            float typeScore = PSDMatchTypeUtility.GetTypeMatchScore(node, item, config.typeCompatScore);
+            return CalculateMatchScoreFromGeometry(nodeGeom, psdGeom, typeScore, config, item, nodeRect);
         }
 
         public static float CalculateMatchScoreFromGeometry(
             PSDMatchGeometry.NodeGeom nodeGeom,
             PSDMatchGeometry.PsdGeom psdGeom,
-            bool isTypeMatch,
-            PSDImportConfig config)
+            float typeMatchScore,
+            PSDImportConfig config,
+            PicData item = default,
+            RectTransform node = null)
         {
-            var input = PSDMatchScoring.ScoringInput.FromConfig(nodeGeom, psdGeom, isTypeMatch, config);
+            var input = PSDMatchScoring.ScoringInput.FromConfigForItem(nodeGeom, psdGeom, typeMatchScore, config, item, node);
             return PSDMatchScoring.Evaluate(input).total;
         }
 
@@ -66,7 +67,7 @@ namespace PSDImporter
             HashSet<Transform> occupiedNodes)
         {
             // 1. ID 优先匹配
-            if (bindingData != null)
+            if (config != null && config.enableIdHistoryMatch && bindingData != null)
             {
                 GameObject savedGo = bindingData.GetBindTarget(item.id);
                 if (savedGo != null && savedGo.transform.IsChildOf(root))
@@ -97,7 +98,7 @@ namespace PSDImporter
             {
                 if (node == root) continue;
                 if (occupiedNodes != null && occupiedNodes.Contains(node.transform)) continue;
-                if (config != null && config.skipInactiveMatch && !node.gameObject.activeInHierarchy) continue;
+                if (PSDMatchNodeFilter.ShouldSkipInactiveMatch(node, root, config)) continue;
 
                 // 【调用核心算法】
                 float totalScore = CalculateMatchScore(item, node, rootRect, psdWidth, psdHeight, config);
@@ -121,17 +122,6 @@ namespace PSDImporter
             }
 
             return null;
-        }
-
-        private static bool IsTypeMatch(Transform node, string psdType)
-        {
-            if (psdType == "Button") return node.GetComponent<Button>() != null;
-            if (psdType == "Text") return node.GetComponent<Text>() != null;
-            if (psdType == "RawImage") return node.GetComponent<RawImage>() != null;
-            if (psdType == "Image") return node.GetComponent<Image>() != null && node.GetComponent<Button>() == null;
-            if (psdType == "Layout") return node.GetComponent<LayoutGroup>() != null;
-            if (psdType == "Item") return node.GetComponent<LayoutGroup>() == null && node.GetComponentInParent<LayoutGroup>() != null;
-            return false;
         }
     }
 }

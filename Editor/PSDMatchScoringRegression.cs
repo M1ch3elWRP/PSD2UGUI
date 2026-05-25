@@ -7,7 +7,7 @@ namespace PSDImporter
 {
     public static class PSDMatchScoringRegression
     {
-        private const string FixturePath = "Editor/Fixtures/PSDMatchScoringRegression.fixture.json";
+        private const string FixtureFileName = "PSDMatchScoringRegression.fixture.json";
         private const float Tolerance = 0.0001f;
 
         [Serializable]
@@ -49,6 +49,8 @@ namespace PSDImporter
             public float weightPosition;
             public float weightSize;
             public float weightType;
+            public float weightDepth;
+            public float weightAnchor;
             public RegressionCase[] cases;
         }
 
@@ -61,10 +63,10 @@ namespace PSDImporter
 
         public static bool RunRegression()
         {
-            string fullPath = Path.Combine(Directory.GetCurrentDirectory(), FixturePath);
+            string fullPath = ResolveFixturePath();
             if (!File.Exists(fullPath))
             {
-                Debug.LogError($"[MatchRegression] Fixture not found: {FixturePath}");
+                Debug.LogError($"[MatchRegression] Fixture not found: {FixtureFileName}");
                 return false;
             }
 
@@ -82,6 +84,9 @@ namespace PSDImporter
             config.weightPosition = fixture.weightPosition;
             config.weightSize = fixture.weightSize;
             config.weightType = fixture.weightType;
+            config.weightDepth = fixture.weightDepth;
+            config.weightAnchor = fixture.weightAnchor;
+            config.maxDepthDiff = fixture.maxDepthDiff;
 
             try
             {
@@ -90,33 +95,25 @@ namespace PSDImporter
                     var nodeGeom = BuildNodeGeom(regressionCase);
                     var psdGeom = BuildPsdGeom(regressionCase);
 
-                    var scoringInput = PSDMatchScoring.ScoringInput.FromConfig(nodeGeom, psdGeom, regressionCase.isTypeMatch, config);
+                    // 回归测试：isTypeMatch=true → typeScore=100f，false → 0f（模拟完全匹配/不匹配）
+                    float regrTypeScore = regressionCase.isTypeMatch ? 100f : 0f;
+                    var scoringInput = PSDMatchScoring.ScoringInput.FromConfig(nodeGeom, psdGeom, regrTypeScore, config);
                     scoringInput.maxDepthDiff = fixture.maxDepthDiff;
                     PSDMatchScoring.ScoreBreakdown unified = PSDMatchScoring.Evaluate(scoringInput);
 
-                    float strategyScore = PSDMatchingStrategy.CalculateMatchScoreFromGeometry(nodeGeom, psdGeom, regressionCase.isTypeMatch, config);
-                    PSDMatchScoring.ScoreBreakdown restoreScore = VisualBindingRestoreService.CalculateScoreFromGeometry(nodeGeom, psdGeom, regressionCase.isTypeMatch, config);
-
-                    float[] features = PSDMatchFeatureExtractor.ExtractFeaturesFromGeometry(
-                        nodeGeom,
-                        psdGeom,
-                        regressionCase.isTypeMatch,
-                        regressionCase.inLayout,
-                        fixture.maxDistanceError,
-                        fixture.maxSizeDiff,
-                        fixture.maxDepthDiff);
+                    float strategyScore = PSDMatchingStrategy.CalculateMatchScoreFromGeometry(nodeGeom, psdGeom, regrTypeScore, config);
+                    PSDMatchScoring.ScoreBreakdown restoreScore = VisualBindingRestoreService.CalculateScoreFromGeometry(nodeGeom, psdGeom, regrTypeScore, config);
 
                     bool caseOk = NearlyEqual(unified.total, strategyScore)
                         && NearlyEqual(unified.total, restoreScore.total)
-                        && NearlyEqual(unified.geometry.distNorm, features[0])
-                        && NearlyEqual(unified.geometry.sizeNorm, features[1])
-                        && NearlyEqual(regressionCase.isTypeMatch ? 1f : 0f, features[2])
-                        && NearlyEqual(unified.geometry.sameDepth, features[4])
-                        && NearlyEqual(unified.geometry.anchorDiff, features[5]);
+                        && NearlyEqual(unified.geometry.distance, restoreScore.geometry.distance)
+                        && NearlyEqual(unified.geometry.sizeDiffRel, restoreScore.geometry.sizeDiffRel)
+                        && NearlyEqual(unified.geometry.sameDepth, restoreScore.geometry.sameDepth)
+                        && NearlyEqual(unified.geometry.anchorDiff, restoreScore.geometry.anchorDiff);
 
                     if (!caseOk)
                     {
-                        Debug.LogError($"[MatchRegression] Case '{regressionCase.name}' mismatch. unified={unified.total:F4}, strategy={strategyScore:F4}, restore={restoreScore.total:F4}, feat(dist={features[0]:F4}, size={features[1]:F4}, type={features[2]:F4}, sameDepth={features[4]:F4}, anchor={features[5]:F4})");
+                        Debug.LogError($"[MatchRegression] Case '{regressionCase.name}' mismatch. unified={unified.total:F4}, strategy={strategyScore:F4}, restore={restoreScore.total:F4}");
                         return false;
                     }
                 }
@@ -158,6 +155,21 @@ namespace PSDImporter
         private static bool NearlyEqual(float a, float b)
         {
             return Mathf.Abs(a - b) <= Tolerance;
+        }
+
+        private static string ResolveFixturePath()
+        {
+            string[] guids = AssetDatabase.FindAssets(Path.GetFileNameWithoutExtension(FixtureFileName));
+            for (int i = 0; i < guids.Length; i++)
+            {
+                string assetPath = AssetDatabase.GUIDToAssetPath(guids[i]);
+                if (assetPath.EndsWith(FixtureFileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Path.Combine(Directory.GetCurrentDirectory(), assetPath);
+                }
+            }
+
+            return Path.Combine(Directory.GetCurrentDirectory(), "Assets/_OpenCode/TZUI/PS/PSDTools/Editor/Fixtures", FixtureFileName);
         }
     }
 }

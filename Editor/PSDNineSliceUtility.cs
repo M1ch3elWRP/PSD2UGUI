@@ -116,7 +116,7 @@ namespace PSDImporter
             for (int d = 0; d < maxCheck; d++)
             {
                 int y = isTop ? (height - 1 - d) : d;
-                if (!IsLineFlat(pixels, width, height, true, y, width, baseColor, out var lineColor))
+                if (!IsLineFlat(pixels, width, height, true, y, width, maxBorder, baseColor, out var lineColor))
                     break;
 
                 if (!baseColor.HasValue) baseColor = lineColor;
@@ -133,7 +133,7 @@ namespace PSDImporter
             for (int d = 0; d < maxCheck; d++)
             {
                 int x = isLeft ? d : (width - 1 - d);
-                if (!IsLineFlat(pixels, width, height, false, x, height, baseColor, out var lineColor))
+                if (!IsLineFlat(pixels, width, height, false, x, height, maxBorder, baseColor, out var lineColor))
                     break;
 
                 if (!baseColor.HasValue) baseColor = lineColor;
@@ -149,12 +149,22 @@ namespace PSDImporter
             bool horizontal,
             int fixedPos,
             int length,
+            int cornerInset,
             Color32? baseColor,
             out Color32 lineColor)
         {
-            int count = Mathf.Min(SampleCount, length);
+            int start = 0;
+            int end = length - 1;
+            if (cornerInset > 0 && length > cornerInset * 2 + 4)
+            {
+                start = cornerInset;
+                end = length - 1 - cornerInset;
+            }
+
+            int sampleLength = end - start + 1;
+            int count = Mathf.Min(SampleCount, sampleLength);
             if (count < 2) count = 2;
-            float step = (length - 1) / (float)(count - 1);
+            float step = (sampleLength - 1) / (float)(count - 1);
 
             Color32 first = default;
             bool hasFirst = false;
@@ -162,7 +172,7 @@ namespace PSDImporter
 
             for (int i = 0; i < count; i++)
             {
-                int pos = Mathf.RoundToInt(i * step);
+                int pos = start + Mathf.RoundToInt(i * step);
                 int x = horizontal ? pos : fixedPos;
                 int y = horizontal ? fixedPos : pos;
                 Color32 c = GetPixel(pixels, width, height, x, y);
@@ -177,7 +187,6 @@ namespace PSDImporter
             lineColor = first;
             if (!hasFirst) return false;
             if ((match / (float)count) < FlatRatio) return false;
-            if (baseColor.HasValue && ColorDistance(first, baseColor.Value) > Tolerance) return false;
             return true;
         }
 

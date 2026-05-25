@@ -1,4 +1,4 @@
-﻿// ExportToPNG.jsx - v8 Decoupled Strategy
+// ExportToPNG.jsx - v8 Decoupled Strategy
 // 策略：双轨制 (Dual Track)
 // 1. 图片导出：完全保留原版逻辑 (Trim -> Save -> Undo)，确保图片绝对正确。
 // 2. Layout数据：在任何裁剪发生前，通过“预计算”获取组的绝对坐标，存入字典。
@@ -13,6 +13,8 @@ var pngScale = 1;
 var groupsAsSkins = false;
 var trimWhitespace = true; 
 var onlyTagged = true;
+var templateFileName = "template.png";
+var exporterScriptVersion = "2026-04-29-template-audit-1";
 // Ignore far tiny outliers when trimming @Img groups
 var tinyOutlierArea = 1000;
 var tinyOutlierMaxDistance = 100;
@@ -50,6 +52,7 @@ function run() {
     new Folder(saveDir).create();
 
     psdName = originalDoc.name;
+    var templateExportPath = "";
 
     // 2. Safe Duplicate
     exportDoc = originalDoc.duplicate();
@@ -61,9 +64,10 @@ function run() {
         // Template
         if (writeTemplate) {
             if (pngScale != 1) scaleImage();
-            var file = new File(saveDir + "template" + ".png");
+            var file = new File(saveDir + templateFileName);
             if (file.exists) file.remove();
             savePNG(file);
+            templateExportPath = templateFileName;
             
             // Re-duplicate if scaled
             if (pngScale != 1) {
@@ -173,18 +177,26 @@ function run() {
                 var isContainer = false;
                 var useLayerBounds = false;
 
-                if (rawName.indexOf("@ImgNoTrim") != -1) { suffixType = "Image"; useLayerBounds = true; }
-                else if (rawName.indexOf("@Img") != -1 || rawName.indexOf("@Bg") != -1) suffixType = "Image";
-                else if (rawName.indexOf("@Btn") != -1) { suffixType = "Button"; isContainer = true; }
-                else if (rawName.indexOf("@H") != -1) { suffixType = "Horizontal"; isContainer = true; }
-                else if (rawName.indexOf("@V") != -1) { suffixType = "Vertical"; isContainer = true; }
-                else if (rawName.indexOf("@G") != -1) { suffixType = "Grid"; isContainer = true; }
-                else if (rawName.indexOf("@Item") != -1) { suffixType = "Item"; isContainer = true; }
+                var stdPrefabKind = "";
+                var stdPrefabVariant = "";
+                if (hasTag(rawName, "@StdBtn")) { suffixType = "Button"; isContainer = true; useLayerBounds = true; stdPrefabKind = "StdBtn"; }
+                else if (hasTag(rawName, "@PopUp")) { suffixType = "Panel"; isContainer = true; useLayerBounds = true; stdPrefabKind = "PopUp"; }
+                else if (hasTag(rawName, "@ItemBox")) { suffixType = "Item"; isContainer = true; useLayerBounds = true; stdPrefabKind = "StdItem"; stdPrefabVariant = "Box"; }
+                else if (hasTag(rawName, "@ItemCircle")) { suffixType = "Item"; isContainer = true; useLayerBounds = true; stdPrefabKind = "StdItem"; stdPrefabVariant = "Circle"; }
+                else if (hasTag(rawName, "@ScrollRect")) { suffixType = "ScrollRect"; isContainer = true; }
+                else if (hasTag(rawName, "@ImgNoTrim")) { suffixType = "Image"; useLayerBounds = true; }
+                else if (hasAnyTag(rawName, "@Img", "@Image", "@CommonSprite", "@CommonSpriteWhite")) { suffixType = "Image"; useLayerBounds = true; }
+                else if (hasTag(rawName, "@Btn")) { suffixType = "Button"; isContainer = true; }
+                else if (hasAnyTag(rawName, "@H", "@HLayout")) { suffixType = "Horizontal"; isContainer = true; }
+                else if (hasAnyTag(rawName, "@V", "@VLayout")) { suffixType = "Vertical"; isContainer = true; }
+                else if (hasAnyTag(rawName, "@G", "@Grid")) { suffixType = "Grid"; isContainer = true; }
+                else if (hasTag(rawName, "@Item")) { suffixType = "Item"; isContainer = true; }
 
                 // --- 坐标逻辑分流 ---
                 var x = 0, y = 0, width = 0, height = 0;
                 var targetDocW = 0, targetDocH = 0;
                 var usedPrecalc = false;
+                var shouldSave = false;
 
                 // 分支 1: 容器/Layout -> 直接从“预计算字典”取值 (不执行 Trim，不影响画布)
                 if (isLayerSet && isContainer) {
@@ -208,8 +220,18 @@ function run() {
                     var preTrimState = exportDoc.activeHistoryState;
 
                     // 2.1 合并/栅格化（避免组或智能对象导出黑图）
+                    var useMergedBounds = false;
+                    if (!useLayerBounds && isLayerSet && suffixType == "Image" && trimWhitespace) {
+                        useLayerBounds = true;
+                        useMergedBounds = true;
+                    }
+                    var customBounds = null;
+                    if (useMergedBounds && layer.typename == "LayerSet") {
+                        customBounds = getGroupBoundsIgnoringOutliers(layer);
+                    }
+
                     var isSmartObjectLayer = (layer.typename == "ArtLayer" && layer.kind == LayerKind.SMARTOBJECT);
-                    if (useLayerBounds && !isSmartObjectLayer) {
+                    if (useLayerBounds && isLayerSet && !isSmartObjectLayer) {
                         try {
                             exportDoc.activeLayer = layer;
                             executeAction(stringIDToTypeID("newPlacedLayer"), undefined, DialogModes.NO);
@@ -217,21 +239,12 @@ function run() {
                             isSmartObjectLayer = (layer.typename == "ArtLayer" && layer.kind == LayerKind.SMARTOBJECT);
                         } catch (e) {}
                     }
-                    var customBounds = null;
-                    if (useMergedBounds && layer.typename == "LayerSet") {
-                        customBounds = getGroupBoundsIgnoringOutliers(layer);
-                    }
                     if (!(useLayerBounds && isSmartObjectLayer)) {
                         layer = prepareLayerForExport(layer, suffixType);
                     }
 
                     var layerBoundsW = 0;
                     var layerBoundsH = 0;
-                    var useMergedBounds = false;
-                    if (!useLayerBounds && isLayerSet && suffixType == "Image" && trimWhitespace) {
-                        useLayerBounds = true;
-                        useMergedBounds = true;
-                    }
                     if (useLayerBounds) {
                         var b = customBounds ? customBounds : layer.bounds;
                         var l = b[0].as("px");
@@ -282,7 +295,6 @@ function run() {
                     }
 
                     // 4. 存图
-                    var shouldSave = false;
                     if (writePngs) {
                         if (suffixType == "Image") shouldSave = true;
                         else if (suffixType == "Button") { 
@@ -359,24 +371,16 @@ function run() {
                 for(var z=0; z<layers.length; z++) { if(layers[z] == sourceLayer) { idx = z; break; } }
                 var index = (layers.length - 1) - idx; 
 
-                var treatAsText = false;
-                try { treatAsText = (layer.typename == "ArtLayer" && layer.kind == LayerKind.TEXT && suffixType == "Normal"); } catch (typeErr) {}
-                var textContent = "";
-                var textSize = 0;
-                var textColor = "";
-                if (treatAsText) {
-                    try {
-                        // PS 2026 安全检查：确认图层引用仍然有效
-                        var ti = null;
-                        try { ti = layer.textItem; } catch (tiErr) { treatAsText = false; }
-                        if (!ti) { treatAsText = false; }
-                        else {
-                            textContent = ti.contents;
-                            textSize = getTextSizePx(layer, ti, exportDoc, pngScale);
-                            textColor = "#" + rgbToHex(ti.color);
-                        }
-                    } catch (e) {
-                        treatAsText = false;
+                var textMeta = extractTextLayerData(layer, exportDoc, pngScale);
+                var treatAsText = textMeta.isText && suffixType == "Normal";
+                var textContent = textMeta.content;
+                var textSize = textMeta.fontSize;
+                var textColor = textMeta.fontColor;
+                var stdTextItems = [];
+                if (stdPrefabKind == "StdBtn") {
+                    stdTextItems = collectStdPrefabTextItems(sourceLayer, layoutBoundsMap, exportDoc, pngScale, skeletonByNodeId);
+                    if (stdTextItems.length <= 0) {
+                        pushWarning(exportWarnings, "std_prefab_text_empty", safeLayerName(sourceLayer));
                     }
                 }
 
@@ -389,6 +393,8 @@ function run() {
                     width: Math.round(width),
                     height: Math.round(height),
                     uiType: suffixType,
+                    stdPrefabKind: stdPrefabKind,
+                    stdPrefabVariant: stdPrefabVariant,
                     isText: treatAsText
                 };
                 if (usedPrecalc) {
@@ -399,6 +405,19 @@ function run() {
                     legacyItem.content = textContent;
                     legacyItem.fontSize = textSize;
                     legacyItem.fontColor = textColor;
+                    legacyItem.opacity = textMeta.opacity;
+                    legacyItem.lineSpacing = textMeta.lineSpacing;
+                    legacyItem.textAlign = textMeta.textAlign;
+                    legacyItem.hasStroke = textMeta.hasStroke;
+                    legacyItem.strokeColor = textMeta.strokeColor;
+                    legacyItem.strokeSize = textMeta.strokeSize;
+                    legacyItem.hasGradient = textMeta.hasGradient;
+                    legacyItem.gradientTopColor = textMeta.gradientTopColor;
+                    legacyItem.gradientBottomColor = textMeta.gradientBottomColor;
+                    legacyItem.gradientVertical = textMeta.gradientVertical;
+                }
+                if (stdTextItems.length > 0) {
+                    legacyItem.stdTextItems = stdTextItems;
                 }
                 legacyPngDataMap[skname].push(legacyItem);
 
@@ -434,8 +453,10 @@ function run() {
                     parentNodeId: parentNodeId,
                     name: safeSourceLayerName,
                     pngName: safePngName,
-                    exportPath: safePngName + ".png",
+                    exportPath: isExported ? (safePngName + ".png") : "",
                     uiType: suffixType,
+                    stdPrefabKind: stdPrefabKind,
+                    stdPrefabVariant: stdPrefabVariant,
                     tagList: tagList,
                     absBounds: rectObjFromBounds(sourceBounds),
                     trimBounds: { x: x - width / 2, y: y - height / 2, width: Math.round(width), height: Math.round(height) },
@@ -444,10 +465,27 @@ function run() {
                     // Text-layer fields (v2 fix): carry text info into assets[] so C# can create Text nodes
                     isText: !!treatAsText
                 };
+                if (usedPrecalc) {
+                    assetRecord.precalc = true;
+                    assetRecord.precalcOrigin = "bottom-left";
+                }
                 if (treatAsText) {
                     assetRecord.textContent = textContent;
                     assetRecord.fontSize = textSize;
                     assetRecord.fontColor = textColor;
+                    assetRecord.opacity = textMeta.opacity;
+                    assetRecord.lineSpacing = textMeta.lineSpacing;
+                    assetRecord.textAlign = textMeta.textAlign;
+                    assetRecord.hasStroke = textMeta.hasStroke;
+                    assetRecord.strokeColor = textMeta.strokeColor;
+                    assetRecord.strokeSize = textMeta.strokeSize;
+                    assetRecord.hasGradient = textMeta.hasGradient;
+                    assetRecord.gradientTopColor = textMeta.gradientTopColor;
+                    assetRecord.gradientBottomColor = textMeta.gradientBottomColor;
+                    assetRecord.gradientVertical = textMeta.gradientVertical;
+                }
+                if (stdTextItems.length > 0) {
+                    assetRecord.stdTextItems = stdTextItems;
                 }
                 assets.push(assetRecord);
 
@@ -466,9 +504,13 @@ function run() {
             canvas: { width: canvasWidth, height: canvasHeight },
             psdName: decodeURI(originalDoc.name),
             generatedAtUtc: (new Date()).toUTCString(),
+            exporterScriptVersion: exporterScriptVersion,
             pngScale: pngScale,
             trimWhitespace: trimWhitespace,
             onlyTagged: onlyTagged,
+            writeTemplate: writeTemplate,
+            templatePngPath: templateExportPath,
+            templatePng: templateExportPath,
             warnings: exportWarnings
         };
 
@@ -670,32 +712,53 @@ function inferLayerTypeInfo(layer, rawName) {
         layoutHint: "None",
         groupRoleHint: (layer.typename == "LayerSet") ? "Group" : "Leaf"
     };
+    var layoutHint = inferLayoutHintFromTags(rawName);
     if (layer.typename == "ArtLayer" && layer.kind == LayerKind.TEXT) {
         info.layerType = "Text";
         info.uiTypeHint = "Text";
-    } else if (rawName.indexOf("@ImgNoTrim") != -1 || rawName.indexOf("@Img") != -1 || rawName.indexOf("@Bg") != -1) {
-        info.uiTypeHint = "Image";
-    } else if (rawName.indexOf("@Btn") != -1) {
+    } else if (hasTag(rawName, "@StdBtn")) {
         info.uiTypeHint = "Button";
         info.groupRoleHint = "ContainerCandidate";
-    } else if (rawName.indexOf("@H") != -1) {
+    } else if (hasTag(rawName, "@PopUp")) {
+        info.uiTypeHint = "Panel";
+        info.groupRoleHint = "ContainerCandidate";
+    } else if (hasAnyTag(rawName, "@ItemBox", "@ItemCircle")) {
+        info.uiTypeHint = "Item";
+        info.groupRoleHint = "ContainerCandidate";
+    } else if (hasTag(rawName, "@ScrollRect")) {
+        info.uiTypeHint = "ScrollRect";
+        info.layoutHint = layoutHint;
+        info.groupRoleHint = "ContainerCandidate";
+    } else if (hasAnyTag(rawName, "@ImgNoTrim", "@Img", "@Image", "@CommonSprite", "@CommonSpriteWhite")) {
+        info.uiTypeHint = "Image";
+    } else if (hasTag(rawName, "@Btn")) {
+        info.uiTypeHint = "Button";
+        info.groupRoleHint = "ContainerCandidate";
+    } else if (hasAnyTag(rawName, "@H", "@HLayout")) {
         info.uiTypeHint = "Horizontal";
         info.layoutHint = "Horizontal";
         info.groupRoleHint = "ContainerCandidate";
-    } else if (rawName.indexOf("@V") != -1) {
+    } else if (hasAnyTag(rawName, "@V", "@VLayout")) {
         info.uiTypeHint = "Vertical";
         info.layoutHint = "Vertical";
         info.groupRoleHint = "ContainerCandidate";
-    } else if (rawName.indexOf("@G") != -1) {
+    } else if (hasAnyTag(rawName, "@G", "@Grid")) {
         info.uiTypeHint = "Grid";
         info.layoutHint = "Grid";
         info.groupRoleHint = "ContainerCandidate";
-    } else if (rawName.indexOf("@Item") != -1) {
+    } else if (hasTag(rawName, "@Item")) {
         info.uiTypeHint = "Item";
         info.groupRoleHint = "ContainerCandidate";
     }
     if (layer.typename == "LayerSet" && info.groupRoleHint == "Group") info.groupRoleHint = "GroupCandidate";
     return info;
+}
+
+function inferLayoutHintFromTags(rawName) {
+    if (hasAnyTag(rawName, "@H", "@HLayout")) return "Horizontal";
+    if (hasAnyTag(rawName, "@V", "@VLayout")) return "Vertical";
+    if (hasAnyTag(rawName, "@G", "@Grid")) return "Grid";
+    return "None";
 }
 
 function getLayerOpacity(layer) {
@@ -773,6 +836,24 @@ function parseTagList(rawName) {
     return tags;
 }
 
+function hasTag(rawName, tag) {
+    if (!rawName || !tag) return false;
+    if (tag.charAt(0) != "@") tag = "@" + tag;
+    var tags = parseTagList(rawName);
+    var target = tag.toLowerCase();
+    for (var i = 0; i < tags.length; i++) {
+        if (String(tags[i]).toLowerCase() == target) return true;
+    }
+    return false;
+}
+
+function hasAnyTag(rawName) {
+    for (var i = 1; i < arguments.length; i++) {
+        if (hasTag(rawName, arguments[i])) return true;
+    }
+    return false;
+}
+
 function toPrettyJson(obj) {
     // Single reliable path: hand-written recursive serializer.
     // Zero dependency on any ExtendScript global object (JSON, toSource).
@@ -809,9 +890,10 @@ function serializeObject(o, depth) {
     if (t == "boolean") return o ? "true" : "false";
 
     if (o instanceof Array || (t == "object" && o.length !== undefined)) {
+        if (o.length === 0) return "[]";
         var parts = [];
-        for (var i = 0; i < o.length; i++) parts.push(serializeObject(o[i], depth + 1));
-        return "[" + parts.join(", ") + "]";
+        for (var i = 0; i < o.length; i++) parts.push(indentString(depth + 1) + serializeObject(o[i], depth + 1));
+        return "[\n" + parts.join(",\n") + "\n" + indentString(depth) + "]";
     }
 
     if (t == "object") {
@@ -820,12 +902,19 @@ function serializeObject(o, depth) {
             if (!o.hasOwnProperty(k)) continue;
             var val = o[k];
             if (val === undefined) continue;  // Skip undefined — same behavior as JSON.stringify
-            parts2.push("\"" + k + "\": " + serializeObject(val, depth + 1));
+            parts2.push(indentString(depth + 1) + "\"" + k + "\": " + serializeObject(val, depth + 1));
         }
-        return "{" + parts2.join(", ") + "}";
+        if (parts2.length === 0) return "{}";
+        return "{\n" + parts2.join(",\n") + "\n" + indentString(depth) + "}";
     }
 
     return "null";
+}
+
+function indentString(depth) {
+    var s = "";
+    for (var i = 0; i < depth * 2; i++) s += " ";
+    return s;
 }
 
 function pushWarning(warnings, code, err) {
@@ -858,11 +947,13 @@ function collectLayers(parent, collect, onlyTagged) {
 
             var name = layer.name;
             var hasTag = (name.indexOf("@") != -1);
-            var isAtomic = (name.indexOf("@Img") != -1 || name.indexOf("@Bg") != -1 || name.indexOf("@ImgNoTrim") != -1);
-            var isContainer = (name.indexOf("@Btn") != -1 || name.indexOf("@H") != -1 || name.indexOf("@V") != -1 || name.indexOf("@G") != -1 || name.indexOf("@Item") != -1);
+            var isStdPrefabRoot = hasAnyTag(name, "@StdBtn", "@PopUp", "@ItemBox", "@ItemCircle");
+            var isAtomic = hasAnyTag(name, "@Img", "@Image", "@ImgNoTrim", "@CommonSprite", "@CommonSpriteWhite");
+            var isContainer = hasAnyTag(name, "@ScrollRect", "@Btn", "@H", "@HLayout", "@V", "@VLayout", "@G", "@Grid", "@Item");
 
             if (hasTag) {
                 if (isAtomic) collect.push(layer);
+                else if (isStdPrefabRoot) { collect.push(layer); }
                 else if (isContainer) { collect.push(layer); if (layer.typename == "LayerSet") collectLayers(layer, collect, onlyTagged); }
                 else if (layer.typename == "LayerSet") collectLayers(layer, collect, onlyTagged);
                 else collect.push(layer);
@@ -874,6 +965,132 @@ function collectLayers(parent, collect, onlyTagged) {
             }
         }
         } catch (e) {}
+    }
+}
+
+function extractTextLayerData(layer, doc, scale) {
+    var data = {
+        isText: false,
+        content: "",
+        fontSize: 0,
+        fontColor: "#000000",
+        opacity: 100,
+        lineSpacing: -1,
+        textAlign: "center",
+        hasStroke: false,
+        strokeColor: "#000000",
+        strokeSize: 0,
+        hasGradient: false,
+        gradientTopColor: "#FFFFFF",
+        gradientBottomColor: "#000000",
+        gradientVertical: true
+    };
+
+    try {
+        if (!(layer.typename == "ArtLayer" && layer.kind == LayerKind.TEXT)) return data;
+    } catch (typeErr) {
+        return data;
+    }
+
+    try {
+        var ti = layer.textItem;
+        if (!ti) return data;
+
+        data.isText = true;
+        data.content = String(ti.contents || "");
+        data.fontSize = getTextSizePx(layer, ti, doc, scale);
+        try { data.fontColor = "#" + rgbToHex(ti.color); } catch (colorErr) { data.fontColor = "#000000"; }
+        data.opacity = getLayerOpacity(layer);
+        data.lineSpacing = getTextLeadingPx(ti, doc, scale);
+        data.textAlign = getTextAlignValue(ti);
+
+        var fx = extractTextLayerEffects(layer);
+        if (fx) {
+            data.hasStroke = !!fx.hasStroke;
+            data.strokeColor = fx.strokeColor || "#000000";
+            data.strokeSize = fx.strokeSize || 0;
+            data.hasGradient = !!fx.hasGradient;
+            data.gradientTopColor = fx.gradientTopColor || "#FFFFFF";
+            data.gradientBottomColor = fx.gradientBottomColor || "#000000";
+            data.gradientVertical = fx.gradientVertical !== false;
+        }
+    } catch (e) {
+        data.isText = false;
+    }
+
+    return data;
+}
+
+function collectStdPrefabTextItems(rootLayer, layoutBoundsMap, doc, scale, skeletonByNodeId) {
+    var result = [];
+    if (!rootLayer) return result;
+
+    var rootId = safeLayerId(rootLayer);
+    var stored = (layoutBoundsMap && rootId != 0) ? layoutBoundsMap[rootId] : null;
+    var rootBounds = stored
+        ? { l: stored.x, t: stored.y, r: stored.x + stored.w, b: stored.y + stored.h }
+        : getLayerBoundsPx(rootLayer);
+
+    var rootW = Math.max(0, rootBounds.r - rootBounds.l);
+    var rootH = Math.max(0, rootBounds.b - rootBounds.t);
+    if (rootW <= 0 || rootH <= 0) return result;
+
+    collectStdPrefabTextItemsRecursive(rootLayer, result, rootBounds, rootW, rootH, doc, scale, skeletonByNodeId);
+    result.sort(function(a, b) {
+        if (a.normalizedCenterX != b.normalizedCenterX) return a.normalizedCenterX - b.normalizedCenterX;
+        return a.normalizedCenterY - b.normalizedCenterY;
+    });
+    return result;
+}
+
+function collectStdPrefabTextItemsRecursive(parent, outList, rootBounds, rootW, rootH, doc, scale, skeletonByNodeId) {
+    var len = 0;
+    try { len = parent.layers.length; } catch (e) { return; }
+
+    for (var i = 0; i < len; i++) {
+        var layer = null;
+        try { layer = parent.layers[i]; } catch (layerErr) { continue; }
+        if (!layer) continue;
+        if (ignoreHiddenLayers) {
+            var layerId = safeLayerId(layer);
+            var skeletonNode = (skeletonByNodeId && layerId != 0) ? skeletonByNodeId[layerId] : null;
+            var isOriginallyVisible = skeletonNode ? !!skeletonNode.visible : safeLayerVisible(layer);
+            if (!isOriginallyVisible) continue;
+        }
+
+        var textMeta = extractTextLayerData(layer, doc, scale);
+        if (textMeta.isText) {
+            var abs = getLayerBoundsPx(layer);
+            var width = Math.max(0, abs.r - abs.l);
+            var height = Math.max(0, abs.b - abs.t);
+            var centerX = abs.l + width * 0.5;
+            var centerY = abs.t + height * 0.5;
+            var normalizedX = rootW > 0 ? (centerX - rootBounds.l) / rootW : 0.5;
+            var normalizedY = rootH > 0 ? (centerY - rootBounds.t) / rootH : 0.5;
+
+            outList.push({
+                sourceNodeId: safeLayerId(layer),
+                name: sanitizePathSegment(safeLayerName(layer)),
+                textContent: textMeta.content,
+                fontSize: textMeta.fontSize,
+                fontColor: textMeta.fontColor,
+                opacity: textMeta.opacity,
+                lineSpacing: textMeta.lineSpacing,
+                textAlign: textMeta.textAlign,
+                width: Math.round(width * scale),
+                height: Math.round(height * scale),
+                localCenterX: Math.round((centerX - rootBounds.l) * scale * 100) / 100,
+                localCenterY: Math.round((centerY - rootBounds.t) * scale * 100) / 100,
+                normalizedCenterX: Math.round(normalizedX * 1000) / 1000,
+                normalizedCenterY: Math.round(normalizedY * 1000) / 1000
+            });
+        }
+
+        try {
+            if (layer.typename == "LayerSet") {
+                collectStdPrefabTextItemsRecursive(layer, outList, rootBounds, rootW, rootH, doc, scale, skeletonByNodeId);
+            }
+        } catch (ignored) {}
     }
 }
 
@@ -1202,11 +1419,13 @@ function loadSettings() {
     try { settings = app.getCustomOptions(settingsID); } catch (e) { return; }
     if (settings.hasKey(saveDirID)) saveDir = settings.getString(saveDirID);
     if (settings.hasKey(onlyTaggedID)) onlyTagged = settings.getBoolean(onlyTaggedID);
+    if (settings.hasKey(writeTemplateID)) writeTemplate = settings.getBoolean(writeTemplateID);
 }
 function saveSettings() {
     var s = new ActionDescriptor();
     s.putString(saveDirID, saveDir);
     s.putBoolean(onlyTaggedID, onlyTagged);
+    s.putBoolean(writeTemplateID, writeTemplate);
     app.putCustomOptions(settingsID, s, true);
 }
 function scaleImage() { activeDocument.resizeImage(UnitValue(activeDocument.width.as("px")*pngScale,"px"), null, 300, ResampleMethod.BICUBICSHARPER); }
@@ -1291,6 +1510,200 @@ function getTextSizePx(layer, textItem, doc, scale) {
     size = Math.round(size * 10) / 10;
 
     return size;
+}
+
+function getTextLeadingPx(textItem, doc, scale) {
+    var leading = -1;
+    var res = 72;
+    try {
+        if (doc && doc.resolution) res = doc.resolution;
+        var uv = textItem.leading;
+        if (uv != undefined && uv != null) {
+            if (uv.as) {
+                try { leading = uv.as("px"); } catch (pxErr) {}
+                if ((!leading || isNaN(leading)) && res) {
+                    try { leading = uv.as("pt") * res / 72; } catch (ptErr) {}
+                }
+            }
+            if (!leading || isNaN(leading)) {
+                leading = parseFloat(uv);
+            }
+        }
+    } catch (e) {}
+
+    if (!leading || isNaN(leading) || leading <= 0) return -1;
+    if (scale && scale != 1) leading = leading * scale;
+    return Math.round(leading * 10) / 10;
+}
+
+function getTextAlignValue(textItem) {
+    var raw = "";
+    try { raw = String(textItem.justification || "").toLowerCase(); } catch (e) { raw = ""; }
+    if (raw.indexOf("left") != -1) return "left";
+    if (raw.indexOf("right") != -1) return "right";
+    return "center";
+}
+
+function extractTextLayerEffects(layer) {
+    var result = {
+        hasStroke: false,
+        strokeColor: "#000000",
+        strokeSize: 0,
+        hasGradient: false,
+        gradientTopColor: "#FFFFFF",
+        gradientBottomColor: "#000000",
+        gradientVertical: true
+    };
+
+    try {
+        if (!layer || !layer.id || layer.id === 0) return result;
+
+        var ref = new ActionReference();
+        ref.putIdentifier(charIDToTypeID("Lyr "), layer.id);
+        var desc = executeActionGet(ref);
+        var layerEffectsId = stringIDToTypeID("layerEffects");
+        if (!desc.hasKey(layerEffectsId)) return result;
+
+        var effects = desc.getObjectValue(layerEffectsId);
+        var frameFx = tryGetEffectObject(effects, "frameFX");
+        if (frameFx && isEffectEnabled(frameFx)) {
+            result.hasStroke = true;
+            result.strokeSize = readUnitDouble(frameFx, "size", 0);
+            result.strokeColor = readEffectColor(frameFx, "color", "#000000");
+        }
+
+        var gradientFx = tryGetEffectObject(effects, "gradientFill");
+        if (!gradientFx) gradientFx = tryGetFirstEffectFromList(effects, "gradientFillMulti");
+        if (gradientFx && isEffectEnabled(gradientFx)) {
+            var gradientInfo = readGradientEffectInfo(gradientFx);
+            if (gradientInfo) {
+                result.hasGradient = true;
+                result.gradientTopColor = gradientInfo.gradientTopColor;
+                result.gradientBottomColor = gradientInfo.gradientBottomColor;
+                result.gradientVertical = gradientInfo.gradientVertical;
+            }
+        }
+    } catch (e) {}
+
+    return result;
+}
+
+function tryGetEffectObject(desc, keyName) {
+    try {
+        var key = stringIDToTypeID(keyName);
+        if (!desc.hasKey(key)) return null;
+        return desc.getObjectValue(key);
+    } catch (e) { return null; }
+}
+
+function tryGetFirstEffectFromList(desc, keyName) {
+    try {
+        var key = stringIDToTypeID(keyName);
+        if (!desc.hasKey(key)) return null;
+        var list = desc.getList(key);
+        if (!list || list.count <= 0) return null;
+        return list.getObjectValue(0);
+    } catch (e) { return null; }
+}
+
+function isEffectEnabled(effectDesc) {
+    try {
+        var enabledId = stringIDToTypeID("enabled");
+        if (!effectDesc.hasKey(enabledId)) return true;
+        return effectDesc.getBoolean(enabledId);
+    } catch (e) { return true; }
+}
+
+function readUnitDouble(desc, keyName, fallback) {
+    try {
+        var key = stringIDToTypeID(keyName);
+        if (!desc.hasKey(key)) return fallback;
+        return desc.getUnitDoubleValue(key);
+    } catch (e) {
+        try {
+            var key2 = stringIDToTypeID(keyName);
+            if (!desc.hasKey(key2)) return fallback;
+            return desc.getDouble(key2);
+        } catch (ignored) { return fallback; }
+    }
+}
+
+function readInteger(desc, keyName, fallback) {
+    try {
+        var key = stringIDToTypeID(keyName);
+        if (!desc.hasKey(key)) return fallback;
+        return desc.getInteger(key);
+    } catch (e) { return fallback; }
+}
+
+function readEffectColor(desc, keyName, fallback) {
+    try {
+        var key = stringIDToTypeID(keyName);
+        if (!desc.hasKey(key)) return fallback;
+        return actionColorToHex(desc.getObjectValue(key), fallback);
+    } catch (e) { return fallback; }
+}
+
+function actionColorToHex(colorDesc, fallback) {
+    try {
+        var red = readColorChannel(colorDesc, "red", NaN);
+        var green = readColorChannel(colorDesc, "grain", NaN);
+        if (isNaN(green)) green = readColorChannel(colorDesc, "green", NaN);
+        var blue = readColorChannel(colorDesc, "blue", NaN);
+        if (isNaN(red) || isNaN(green) || isNaN(blue)) return fallback;
+        return "#" + rgbToHex({ rgb: { red: red, green: green, blue: blue } });
+    } catch (e) { return fallback; }
+}
+
+function readColorChannel(colorDesc, keyName, fallback) {
+    try {
+        var key = stringIDToTypeID(keyName);
+        if (!colorDesc.hasKey(key)) return fallback;
+        return colorDesc.getDouble(key);
+    } catch (e) { return fallback; }
+}
+
+function readGradientEffectInfo(effectDesc) {
+    try {
+        var gradientId = stringIDToTypeID("gradient");
+        if (!effectDesc.hasKey(gradientId)) return null;
+        var gradient = effectDesc.getObjectValue(gradientId);
+        var stops = readGradientStops(gradient);
+        if (!stops || stops.length === 0) return null;
+        var angle = readUnitDouble(effectDesc, "angle", 90);
+        return {
+            gradientTopColor: stops[stops.length - 1].color,
+            gradientBottomColor: stops[0].color,
+            gradientVertical: isGradientVertical(angle)
+        };
+    } catch (e) { return null; }
+}
+
+function readGradientStops(gradientDesc) {
+    var stops = [];
+    try {
+        var colorsId = stringIDToTypeID("colors");
+        if (!gradientDesc.hasKey(colorsId)) return stops;
+        var list = gradientDesc.getList(colorsId);
+        if (!list) return stops;
+        for (var i = 0; i < list.count; i++) {
+            try {
+                var stop = list.getObjectValue(i);
+                stops.push({
+                    location: readInteger(stop, "location", i),
+                    color: readEffectColor(stop, "color", "#FFFFFF")
+                });
+            } catch (ignored) {}
+        }
+    } catch (e) {}
+    stops.sort(function(a, b) { return a.location - b.location; });
+    return stops;
+}
+
+function isGradientVertical(angle) {
+    var normalized = angle % 180;
+    if (normalized < 0) normalized += 180;
+    return Math.abs(normalized - 90) <= 45;
 }
 
 function getTextLayerTransformScale(layer) {
