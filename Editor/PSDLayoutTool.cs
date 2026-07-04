@@ -48,8 +48,8 @@ namespace PSDImporter
         {
             // 1. 获取或添加组件
             var lg = isHorizontal ?
-                EnsureLayoutComponent<HorizontalLayoutGroup>(go, config != null ? config.horizontalLayoutComponent : null) as HorizontalOrVerticalLayoutGroup :
-                EnsureLayoutComponent<VerticalLayoutGroup>(go, config != null ? config.verticalLayoutComponent : null) as HorizontalOrVerticalLayoutGroup;
+                EnsureComponent<HorizontalLayoutGroup>(go) as HorizontalOrVerticalLayoutGroup :
+                EnsureComponent<VerticalLayoutGroup>(go) as HorizontalOrVerticalLayoutGroup;
 
             // 2. 排序 (确保按照视觉顺序计算间距)
             if (isHorizontal)
@@ -108,7 +108,7 @@ namespace PSDImporter
         // --- 网格布局 (Grid) ---
         private static void SetupGrid(GameObject go, PicData group, List<PicData> children, PSDImportConfig config)
         {
-            var glg = EnsureLayoutComponent<GridLayoutGroup>(go, config != null ? config.gridLayoutComponent : null);
+            var glg = EnsureComponent<GridLayoutGroup>(go);
 
             // 1. 按 X 坐标排序后聚类（容差 ±5px），推断列数
             var sortedByX = children.OrderBy(c => c.x).ToList();
@@ -180,28 +180,6 @@ namespace PSDImporter
             glg.childAlignment = TextAnchor.UpperLeft;
         }
 
-        private static T EnsureLayoutComponent<T>(GameObject go, MonoScript overrideScript) where T : Component
-        {
-            var overrideType = GetOverrideType<T>(overrideScript);
-            if (overrideType != null)
-            {
-                RemoveOtherLayoutGroups(go, overrideType);
-                var comp = go.GetComponent(overrideType) as T;
-                if (comp == null) comp = go.AddComponent(overrideType) as T;
-                return comp;
-            }
-            return EnsureComponent<T>(go);
-        }
-
-        private static System.Type GetOverrideType<T>(MonoScript script) where T : Component
-        {
-            if (script == null) return null;
-            var type = script.GetClass();
-            if (type == null) return null;
-            if (!typeof(T).IsAssignableFrom(type)) return null;
-            return type;
-        }
-
         private static void RemoveOtherLayoutGroups(GameObject go, System.Type keepType)
         {
             var layoutGroups = go.GetComponents<LayoutGroup>();
@@ -217,7 +195,11 @@ namespace PSDImporter
         private static T EnsureComponent<T>(GameObject go) where T : Component
         {
             T comp = go.GetComponent<T>();
-            if (comp == null) comp = go.AddComponent<T>();
+            if (comp == null)
+            {
+                RemoveOtherLayoutGroups(go, typeof(T));
+                comp = go.AddComponent<T>();
+            }
             return comp;
         }
 

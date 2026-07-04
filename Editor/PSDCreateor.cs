@@ -282,7 +282,7 @@ namespace PSDImporter
             switch (item.uiType)
             {
                 case "Text":
-                    txt = EnsureComponentWithOverride<Text>(go, config != null ? config.textComponent : null);
+                    txt = EnsureComponent<Text>(go);
                     SetupText(txt, item, config);
                     ApplyTextLayoutAndPosition(txt, item, psdData, updatePosition, controlledByLayout, previousSize, config);
 
@@ -300,7 +300,7 @@ namespace PSDImporter
                     break;
 
                 case "Button":
-                    EnsureComponentWithOverride<Button>(go, config != null ? config.buttonComponent : null);
+                    EnsureComponent<Button>(go);
                     //if (go.GetComponent<Image>() == null)
                     //{
                     //    var img = go.AddComponent<Image>();
@@ -326,7 +326,7 @@ namespace PSDImporter
                 default:
                     if (item.layoutType == "None")
                     {
-                        var img = EnsureComponentWithOverride<Image>(go, config != null ? config.imageComponent : null);
+                        var img = EnsureComponent<Image>(go);
                         SetupImage(img, item, psdData.psdAssetsFolder, config);
                     }
                     break;
@@ -1575,34 +1575,6 @@ namespace PSDImporter
 
         // --- 通用辅助 ---
 
-        private static T EnsureComponentWithOverride<T>(GameObject go, MonoScript overrideScript) where T : UnityEngine.Component
-        {
-            var overrideType = GetOverrideType<T>(overrideScript);
-            if (overrideType != null)
-            {
-                RemoveConflictingUiComponents<T>(go);
-                var comp = go.GetComponent(overrideType) as T;
-                if (comp == null) comp = go.AddComponent(overrideType) as T;
-                return comp;
-            }
-            return EnsureComponent<T>(go);
-        }
-
-        private static System.Type GetOverrideType<T>(MonoScript script) where T : UnityEngine.Component
-        {
-            if (script == null) return null;
-            var type = script.GetClass();
-            if (type == null) return null;
-            if (!typeof(T).IsAssignableFrom(type)) return null;
-            return type;
-        }
-
-        private static void RemoveConflictingUiComponents<T>(GameObject go) where T : UnityEngine.Component
-        {
-            if (typeof(T) == typeof(UnityEngine.UI.Image)) { DestroyIfExists<UnityEngine.UI.Text>(go); }
-            else if (typeof(T) == typeof(UnityEngine.UI.Text)) { DestroyIfExists<UnityEngine.UI.Image>(go); }
-        }
-
         private static T EnsureComponent<T>(GameObject go) where T : UnityEngine.Component
         {
             T comp = go.GetComponent<T>();
@@ -1613,6 +1585,12 @@ namespace PSDImporter
                 comp = go.AddComponent<T>();
             }
             return comp;
+        }
+
+        private static void RemoveConflictingUiComponents<T>(GameObject go) where T : UnityEngine.Component
+        {
+            if (typeof(T) == typeof(UnityEngine.UI.Image)) { DestroyIfExists<UnityEngine.UI.Text>(go); }
+            else if (typeof(T) == typeof(UnityEngine.UI.Text)) { DestroyIfExists<UnityEngine.UI.Image>(go); }
         }
 
         private static void DestroyIfExists<T>(GameObject go) where T : UnityEngine.Component

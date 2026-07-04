@@ -36,18 +36,8 @@ namespace PSDImporter
         [Tooltip("Subfolder name under PSD asset folder for moved duplicates.")]
         public string dedupeMoveFolder = "_Duplicates";
 
-        [Header("Component Overrides (optional)")]
-        [Tooltip("Override @Img/@Image component. Must derive from UnityEngine.UI.Image.")]
-        public MonoScript imageComponent;
-
-        [Tooltip("Override @Btn component. Must derive from UnityEngine.UI.Button.")]
-        public MonoScript buttonComponent;
-
-        [Tooltip("Override text component. Must derive from UnityEngine.UI.Text.")]
-        public MonoScript textComponent;
-
         [Header("Text Font Override")]
-        [Tooltip("If set, all generated/restored Text components use this font.")]
+        [Tooltip("If set, all generated/restored UILabel components use this trueTypeFont.")]
         public Font defaultTextFont;
 
         [Header("Text Layout Matching")]
@@ -77,16 +67,6 @@ namespace PSDImporter
         [Tooltip("Size error ratio needed before Text candidates are rejected by geometry reject.")]
         [Range(0f, 1f)]
         public float textGeometryRejectSizeRatio = 0.6f;
-
-        [Header("Layout Overrides (optional)")]
-        [Tooltip("Override @H layout group. Must derive from UnityEngine.UI.HorizontalLayoutGroup.")]
-        public MonoScript horizontalLayoutComponent;
-
-        [Tooltip("Override @V layout group. Must derive from UnityEngine.UI.VerticalLayoutGroup.")]
-        public MonoScript verticalLayoutComponent;
-
-        [Tooltip("Override @G layout group. Must derive from UnityEngine.UI.GridLayoutGroup.")]
-        public MonoScript gridLayoutComponent;
 
         [Header("Matching Filters")]
         [Tooltip("Use saved PSDBindingData layer-ID history before scoring. Disable during audit/tuning so stale bindings do not override the matcher.")]
