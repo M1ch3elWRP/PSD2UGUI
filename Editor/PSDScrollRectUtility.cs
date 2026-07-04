@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace PSDImporter
 {
@@ -18,7 +17,7 @@ namespace PSDImporter
 
         internal static bool IsScrollRectNode(Transform node)
         {
-            return node != null && node.GetComponent<ScrollRect>() != null;
+            return node != null && node.GetComponent<UIScrollView>() != null;
         }
 
         internal static bool IsScrollContentAlias(PicData item)
@@ -85,40 +84,56 @@ namespace PSDImporter
             bool horizontal = string.Equals(layoutType, "Horizontal", StringComparison.OrdinalIgnoreCase);
             bool vertical = !horizontal;
 
-            ScrollRect scrollRect = rootGo.GetComponent<ScrollRect>();
-            bool createdScrollRect = scrollRect == null;
+            UIScrollView scrollView = rootGo.GetComponent<UIScrollView>();
+            bool createdScrollRect = scrollView == null;
 
             if (createdScrollRect)
             {
-                scrollRect = Undo.AddComponent<ScrollRect>(rootGo);
-                scrollRect.horizontal = horizontal;
-                scrollRect.vertical = vertical;
-                scrollRect.movementType = ScrollRect.MovementType.Elastic;
-                scrollRect.inertia = true;
-                scrollRect.decelerationRate = 0.135f;
-                scrollRect.scrollSensitivity = 1f;
+                scrollView = Undo.AddComponent<UIScrollView>(rootGo);
+                scrollView.movementType = UIScrollView.Movement.Elastic;
+                scrollView.dragEffect = UIScrollView.DragEffect.MomentumAndSpring;
+                scrollView.scrollWheelFactor = 1f;
+                scrollView.momentumAmount = 35f;
             }
-            else
-            {
-                scrollRect.horizontal = horizontal;
-                scrollRect.vertical = vertical;
-            }
+            scrollView.canBeDragged = true;
+            scrollView.disableDrag = false;
 
-            RectTransform viewport = ResolveViewport(rootRt, scrollRect);
+            UIPanel rootPanel = rootGo.GetComponent<UIPanel>();
+            if (rootPanel == null)
+            {
+                rootPanel = Undo.AddComponent<UIPanel>(rootGo);
+            }
+            rootPanel.clipping = UIDrawCall.Clipping.SoftClip;
+            Vector2 rootSize = rootRt.rect.size;
+            rootPanel.clipRange = new Vector4(0f, 0f, Mathf.Max(1f, rootSize.x), Mathf.Max(1f, rootSize.y));
+            rootPanel.clipSoftness = Vector2.zero;
+            scrollView.panel = rootPanel;
+
+            RectTransform viewport = ResolveViewport(rootRt, scrollView);
             if (viewport == null && createdScrollRect)
             {
                 viewport = CreateChildRect("Viewport", rootRt);
                 StretchToParent(viewport);
-                Image viewportImage = viewport.GetComponent<Image>() ?? viewport.gameObject.AddComponent<Image>();
-                viewportImage.color = new Color(1f, 1f, 1f, 0f);
-                viewportImage.raycastTarget = true;
-                if (viewport.GetComponent<RectMask2D>() == null)
+                UISprite viewportImage = viewport.GetComponent<UISprite>();
+                if (viewportImage == null)
                 {
-                    viewport.gameObject.AddComponent<RectMask2D>();
+                    viewportImage = viewport.gameObject.AddComponent<UISprite>();
                 }
+                viewportImage.atlas = PSDCreateor.GetCachedAtlas();
+                viewportImage.spriteName = "White";
+                viewportImage.color = new Color(1f, 1f, 1f, 0f);
+                UIPanel viewportPanel = viewport.GetComponent<UIPanel>();
+                if (viewportPanel == null)
+                {
+                    viewportPanel = viewport.gameObject.AddComponent<UIPanel>();
+                }
+                viewportPanel.clipping = UIDrawCall.Clipping.SoftClip;
+                Vector2 vpSize = viewport.rect.size;
+                viewportPanel.clipRange = new Vector4(0f, 0f, Mathf.Max(1f, vpSize.x), Mathf.Max(1f, vpSize.y));
+                viewportPanel.clipSoftness = Vector2.zero;
             }
 
-            RectTransform content = ResolveContent(rootRt, scrollRect);
+            RectTransform content = ResolveContent(rootRt, scrollView);
             if (content == null && createdScrollRect)
             {
                 content = CreateChildRect("Content", viewport != null ? viewport : rootRt);
@@ -131,8 +146,7 @@ namespace PSDImporter
 
             ConfigureContentRect(content, layoutType);
 
-            scrollRect.viewport = viewport;
-            scrollRect.content = content;
+            scrollView.content = content;
 
             ApplyContentLayout(content, scrollItem, psdData, config, layoutType);
             return content;
@@ -151,7 +165,7 @@ namespace PSDImporter
                 return null;
             }
 
-            return ResolveContent(rootRt, scrollRoot.GetComponent<ScrollRect>());
+            return ResolveContent(rootRt, scrollRoot.GetComponent<UIScrollView>());
         }
 
         internal static void RegisterHierarchyNode(PicData item, Transform node, PSDData psdData, Dictionary<int, Transform> psdIdToNode)
@@ -320,24 +334,25 @@ namespace PSDImporter
             return children;
         }
 
-        private static RectTransform ResolveViewport(RectTransform root, ScrollRect scrollRect)
+        private static RectTransform ResolveViewport(RectTransform root, UIScrollView scrollView)
         {
-            if (scrollRect != null && scrollRect.viewport != null)
+            if (scrollView != null && scrollView.content != null && scrollView.content.parent != null)
             {
-                return scrollRect.viewport;
+                RectTransform vp = scrollView.content.parent as RectTransform;
+                if (vp != null) return vp;
             }
 
             return FindChildRect(root, "Viewport", recursive: false) ?? FindChildRect(root, "Viewport", recursive: true);
         }
 
-        private static RectTransform ResolveContent(RectTransform root, ScrollRect scrollRect)
+        private static RectTransform ResolveContent(RectTransform root, UIScrollView scrollView)
         {
-            if (scrollRect != null && scrollRect.content != null)
+            if (scrollView != null && scrollView.content != null)
             {
-                return scrollRect.content;
+                return scrollView.content as RectTransform;
             }
 
-            RectTransform viewport = ResolveViewport(root, scrollRect);
+            RectTransform viewport = ResolveViewport(root, scrollView);
             if (viewport != null)
             {
                 RectTransform contentUnderViewport = FindChildRect(viewport, "Content", recursive: false) ?? FindChildRect(viewport, "Content", recursive: true);
@@ -448,7 +463,6 @@ namespace PSDImporter
                 layoutData.layoutType = fallbackLayoutType;
             }
 
-            SetupContentSizeFitter(content.gameObject, layoutData.layoutType);
             List<PicData> children = GetDirectVisualChildren(layoutData, psdData);
             if (children.Count == 0 && layoutData.id != scrollItem.id)
             {
@@ -461,21 +475,26 @@ namespace PSDImporter
                 ApplyTemplateChildSize(content, children);
             }
 
-            LayoutRebuilder.ForceRebuildLayoutImmediate(content);
-        }
-
-        private static void SetupContentSizeFitter(GameObject go, string layoutType)
-        {
-            ContentSizeFitter fitter = go.GetComponent<ContentSizeFitter>() ?? go.AddComponent<ContentSizeFitter>();
-            if (string.Equals(layoutType, "Horizontal", StringComparison.OrdinalIgnoreCase))
+            // NGUI 没有 ContentSizeFitter：用 NGUIMath.CalculateRelativeWidgetBounds 算子节点 bounds 后 SetSize
+            Bounds b = NGUIMath.CalculateRelativeWidgetBounds(content.transform);
+            if (b.size.sqrMagnitude > 0.001f)
             {
-                fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
-                fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
+                content.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, b.size.x);
+                content.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, b.size.y);
             }
-            else
+
+            var table = content.GetComponent<UITable>();
+            if (table != null) table.repositionNow = true;
+            var grid = content.GetComponent<UIGrid>();
+            if (grid != null) grid.repositionNow = true;
+            NGUITools.MarkParentChanged();
+
+            // 通知 scrollView 重新约束
+            var scrollView = content.GetComponentInParent<UIScrollView>();
+            if (scrollView != null && scrollView.panel != null)
             {
-                fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-                fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+                scrollView.panel.SetDirty();
+                scrollView.ConstrainToBounds(true);
             }
         }
 
@@ -492,10 +511,11 @@ namespace PSDImporter
                 return;
             }
 
-            GridLayoutGroup grid = content.GetComponent<GridLayoutGroup>();
+            UIGrid grid = content.GetComponent<UIGrid>();
             if (grid != null)
             {
-                grid.cellSize = new Vector2(template.width, template.height);
+                grid.cellWidth = template.width;
+                grid.cellHeight = template.height;
             }
 
             foreach (Transform child in content)

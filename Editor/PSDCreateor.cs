@@ -1585,7 +1585,7 @@ namespace PSDImporter
 
         private static UIAtlas _cachedAtlas;
 
-        private static UIAtlas GetCachedAtlas()
+        public static UIAtlas GetCachedAtlas()
         {
             return _cachedAtlas;
         }
