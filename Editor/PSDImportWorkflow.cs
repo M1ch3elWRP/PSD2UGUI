@@ -44,7 +44,7 @@ namespace PSDImporter
             PSDImportConfig runtimeConfig = ResolveRuntimeConfig(config, out PSDImportConfig tempConfig);
             try
             {
-                RectTransform rootRectTrans = PSDCreateor.CreateUGUI_GenerateMode(psdData, runtimeConfig);
+                RectTransform rootRectTrans = PSDCreateor.CreateNGUI_GenerateMode(psdData, runtimeConfig);
                 root = rootRectTrans != null ? rootRectTrans.gameObject : null;
                 message = $"创建完成，共处理 {psdData.listPngData.Count} 个图层。";
                 return true;
@@ -78,7 +78,7 @@ namespace PSDImporter
             try
             {
                 Undo.RegisterFullObjectHierarchyUndo(targetRoot, "PSD Restore UI");
-                PSDCreateor.CreateUGUI_SyncMode(psdData, targetRoot.transform, runtimeConfig);
+                PSDCreateor.CreateNGUI_SyncMode(psdData, targetRoot.transform, runtimeConfig);
                 message = $"还原完成，共处理 {psdData.listPngData.Count} 个图层。";
                 return true;
             }

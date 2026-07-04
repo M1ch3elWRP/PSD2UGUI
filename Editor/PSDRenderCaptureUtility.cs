@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI;
 using UnityObject = UnityEngine.Object;
 
 namespace PSDImporter
@@ -42,10 +41,14 @@ namespace PSDImporter
                 camera.orthographic = true;
                 camera.orthographicSize = height * 0.5f;
                 camera.aspect = width / (float)height;
-                camera.nearClipPlane = 0.1f;
-                camera.farClipPlane = 20000f;
+                camera.nearClipPlane = -2f;
+                camera.farClipPlane = 2f;
+                camera.orthographicSize = height * 0.5f;
+                camera.aspect = width / (float)height;
                 camera.allowHDR = false;
                 camera.allowMSAA = false;
+                int uiLayer = LayerMask.NameToLayer("UI");
+                if (uiLayer >= 0) camera.cullingMask = 1 << uiLayer;
                 camera.transform.position = new Vector3(0f, 0f, CaptureCameraZ);
                 camera.transform.rotation = Quaternion.identity;
 
@@ -55,7 +58,13 @@ namespace PSDImporter
                 clone.SetActive(true);
                 PrepareCloneForCapture(clone, camera, width, height);
 
-                Canvas.ForceUpdateCanvases();
+                // NGUI：通知所有 UIPanel 重排并标记父级变更，让 UISprite/UILabel/UITable 立即刷新
+                var panels = clone.GetComponentsInChildren<UIPanel>(true);
+                for (int i = 0; i < panels.Length; i++)
+                {
+                    if (panels[i] != null) panels[i].SetDirty();
+                }
+                NGUITools.MarkParentChanged();
 
                 renderTexture = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32);
                 renderTexture.antiAliasing = 1;
@@ -209,32 +218,25 @@ namespace PSDImporter
             Canvas rootCanvas = clone.GetComponent<Canvas>();
             if (rootCanvas == null)
             {
-                rootCanvas = clone.AddComponent<Canvas>();
+                // NGUI 路径：clone 已经是 UIRoot（来自 CreateNGUI_GenerateMode）
+                // 只需要确保所有 UIPanel 都能被 camera 渲染（layer=UI + cullingMask 已在 camera 上设置）
+                var uiRoot = clone.GetComponent<UIRoot>();
+                if (uiRoot == null)
+                {
+                    // 非 NGUI 兜底：clone 不是 UIRoot，加个 Canvas 让渲染管线能跑
+                    rootCanvas = clone.AddComponent<Canvas>();
+                    rootCanvas.renderMode = RenderMode.ScreenSpaceCamera;
+                    rootCanvas.worldCamera = camera;
+                    rootCanvas.planeDistance = Mathf.Abs(CaptureCameraZ);
+                    rootCanvas.overrideSorting = true;
+                    rootCanvas.sortingOrder = 0;
+                }
             }
 
-            CanvasScaler scaler = clone.GetComponent<CanvasScaler>();
-            if (scaler == null)
+            // 把所有 UIPanel alpha 拉满，深度排序按现有顺序保留
+            foreach (UIPanel panel in clone.GetComponentsInChildren<UIPanel>(true))
             {
-                scaler = clone.AddComponent<CanvasScaler>();
-            }
-
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
-            scaler.scaleFactor = 1f;
-            scaler.referencePixelsPerUnit = 100f;
-
-            foreach (CanvasGroup canvasGroup in clone.GetComponentsInChildren<CanvasGroup>(true))
-            {
-                canvasGroup.alpha = 1f;
-                canvasGroup.ignoreParentGroups = false;
-            }
-
-            foreach (Canvas canvas in clone.GetComponentsInChildren<Canvas>(true))
-            {
-                canvas.renderMode = RenderMode.ScreenSpaceCamera;
-                canvas.worldCamera = camera;
-                canvas.planeDistance = Mathf.Abs(CaptureCameraZ);
-                canvas.overrideSorting = true;
-                canvas.sortingOrder = canvas == rootCanvas ? 0 : canvas.sortingOrder;
+                panel.alpha = 1f;
             }
         }
 

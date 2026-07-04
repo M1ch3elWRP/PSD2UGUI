@@ -7,7 +7,6 @@ using Newtonsoft.Json;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using UnityEngine.UI;
 using UnityObject = UnityEngine.Object;
 
 namespace PSDImporter
@@ -735,7 +734,7 @@ namespace PSDImporter
         {
             bool isTextLayer = bind.psdItem.isText ||
                                string.Equals(bind.psdItem.uiType, "Text", StringComparison.OrdinalIgnoreCase) ||
-                               (matchedRectTransform != null && matchedRectTransform.GetComponent<Text>() != null);
+                               (matchedRectTransform != null && matchedRectTransform.GetComponent<UILabel>() != null);
 
             if (bind.isAutoCreated)
             {
@@ -1511,7 +1510,7 @@ namespace PSDImporter
             }
 
             GameObject[] roots = scene.GetRootGameObjects();
-            GameObject canvasRoot = roots.FirstOrDefault(r => r != null && r.GetComponent<Canvas>() != null && r.GetComponent<RectTransform>() != null);
+            GameObject canvasRoot = roots.FirstOrDefault(r => r != null && r.GetComponent<UIRoot>() != null && r.GetComponent<RectTransform>() != null);
             if (canvasRoot != null)
             {
                 return canvasRoot;

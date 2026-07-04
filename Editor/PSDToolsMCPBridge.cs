@@ -6,7 +6,6 @@ using Newtonsoft.Json.Linq;
 using PSDImporter;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI;
 using UnityObject = UnityEngine.Object;
 
 namespace UnityMCP
@@ -307,7 +306,16 @@ namespace UnityMCP
 
             if (!string.Equals(captureSizeMode, "PsdData", StringComparison.OrdinalIgnoreCase))
             {
-                Canvas.ForceUpdateCanvases();
+                // NGUI：通知所有 UIPanel 重排，再读取 root RectTransform 尺寸
+                var panels = targetRoot != null ? targetRoot.GetComponentsInChildren<UIPanel>(true) : null;
+                if (panels != null)
+                {
+                    for (int i = 0; i < panels.Length; i++)
+                    {
+                        if (panels[i] != null) panels[i].SetDirty();
+                    }
+                }
+                NGUITools.MarkParentChanged();
                 RectTransform rect = targetRoot != null ? targetRoot.GetComponent<RectTransform>() : null;
                 if (rect != null && rect.rect.width > 0f && rect.rect.height > 0f)
                 {
@@ -1336,10 +1344,10 @@ namespace UnityMCP
         {
             List<object> issues = new List<object>();
             RectTransform[] rects = root.GetComponentsInChildren<RectTransform>(true);
-            Image[] images = root.GetComponentsInChildren<Image>(true);
-            Text[] texts = root.GetComponentsInChildren<Text>(true);
-            Button[] buttons = root.GetComponentsInChildren<Button>(true);
-            ScrollRect[] scrollRects = root.GetComponentsInChildren<ScrollRect>(true);
+            UISprite[] images = root.GetComponentsInChildren<UISprite>(true);
+            UILabel[] texts = root.GetComponentsInChildren<UILabel>(true);
+            UIButton[] buttons = root.GetComponentsInChildren<UIButton>(true);
+            UIScrollView[] scrollRects = root.GetComponentsInChildren<UIScrollView>(true);
             int zeroSizeRectCount = 0;
             int missingSpriteCount = 0;
             int emptyTextCount = 0;
@@ -1354,33 +1362,32 @@ namespace UnityMCP
                 }
             }
 
-            foreach (Image image in images)
+            foreach (UISprite image in images)
             {
-                if (image.sprite == null && image.gameObject.activeInHierarchy)
+                if ((image.atlas == null || string.IsNullOrEmpty(image.spriteName)) && image.gameObject.activeInHierarchy)
                 {
                     missingSpriteCount++;
-                    AddIssue(issues, maxIssues, "image_missing_sprite", GetHierarchyPath(image.gameObject), "Image", null);
+                    AddIssue(issues, maxIssues, "image_missing_sprite", GetHierarchyPath(image.gameObject), "UISprite", null);
                 }
             }
 
-            foreach (Text text in texts)
+            foreach (UILabel text in texts)
             {
                 if (string.IsNullOrEmpty(text.text) && text.gameObject.activeInHierarchy)
                 {
                     emptyTextCount++;
-                    AddIssue(issues, maxIssues, "empty_text", GetHierarchyPath(text.gameObject), "Text", null);
+                    AddIssue(issues, maxIssues, "empty_text", GetHierarchyPath(text.gameObject), "UILabel", null);
                 }
             }
 
-            foreach (ScrollRect scrollRect in scrollRects)
+            foreach (UIScrollView scrollRect in scrollRects)
             {
                 List<string> missing = new List<string>();
-                if (scrollRect.viewport == null) missing.Add("viewport");
-                if (scrollRect.content == null) missing.Add("content");
+                if (scrollRect.panel == null) missing.Add("panel");
                 if (missing.Count > 0)
                 {
                     brokenScrollRectCount++;
-                    AddIssue(issues, maxIssues, "scrollrect_missing_reference", GetHierarchyPath(scrollRect.gameObject), "ScrollRect", string.Join(",", missing.ToArray()));
+                    AddIssue(issues, maxIssues, "scrollrect_missing_reference", GetHierarchyPath(scrollRect.gameObject), "UIScrollView", string.Join(",", missing.ToArray()));
                 }
             }
 
@@ -1420,10 +1427,10 @@ namespace UnityMCP
 
         private static GameObject FindFirstCanvasRoot()
         {
-            Canvas canvas = Resources.FindObjectsOfTypeAll<Canvas>().FirstOrDefault(IsSceneObject);
-            if (canvas != null)
+            UIRoot root = Resources.FindObjectsOfTypeAll<UIRoot>().FirstOrDefault(IsSceneObject);
+            if (root != null)
             {
-                return canvas.gameObject;
+                return root.gameObject;
             }
 
             RectTransform rect = Resources.FindObjectsOfTypeAll<RectTransform>().FirstOrDefault(IsSceneObject);

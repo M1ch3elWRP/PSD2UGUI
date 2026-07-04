@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI; // 引用UI命名空间
 
 namespace PSDImporter
 {
@@ -25,7 +24,7 @@ namespace PSDImporter
         // =========================================================================
         // 生成模式 (Generate)
         // =========================================================================
-        public static RectTransform CreateUGUI_GenerateMode(PSDData psdData, PSDImportConfig config)
+        public static RectTransform CreateNGUI_GenerateMode(PSDData psdData, PSDImportConfig config)
         {
             AssetDatabase.Refresh();
             PSDAssetDeduper.EnsureScope(psdData.psdAssetsFolder);
@@ -36,6 +35,9 @@ namespace PSDImporter
             rootRectTrans.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, psdData.height);
             rootRectTrans.anchoredPosition = Vector2.zero;
             rootRectTrans.localScale = Vector3.one;
+
+            // 先导出 PNG → 调 NGUI AtlasMaker 打成一个 atlas，供所有 UISprite 引用
+            BuildAtlas(psdData, config);
 
             if (psdData.HasSkeleton)
             {
@@ -208,7 +210,7 @@ namespace PSDImporter
         // =========================================================================
         // 同步模式 (Sync) - 这里的入口主要用于旧菜单，窗口模式主要调用 RefreshNode
         // =========================================================================
-        public static void CreateUGUI_SyncMode(PSDData psdData, Transform root, PSDImportConfig config)
+        public static void CreateNGUI_SyncMode(PSDData psdData, Transform root, PSDImportConfig config)
         {
             AssetDatabase.Refresh();
             PSDAssetDeduper.EnsureScope(psdData.psdAssetsFolder);
@@ -282,30 +284,29 @@ namespace PSDImporter
             switch (item.uiType)
             {
                 case "Text":
-                    txt = EnsureComponent<Text>(go);
-                    SetupText(txt, item, config);
-                    ApplyTextLayoutAndPosition(txt, item, psdData, updatePosition, controlledByLayout, previousSize, config);
-
-                    // 描边：UGUI 原生 Outline
-                    if (item.hasStroke)
                     {
-                        SetupTextOutline(go, item);
-                    }
+                        var txt = EnsureComponent<UILabel>(go);
+                        SetupText(txt, item, config);
+                        ApplyTextLayoutAndPosition(txt, item, psdData, updatePosition, controlledByLayout, previousSize, config);
 
-                    // 渐变：UGUI 原生无渐变 effect，用 Shadow 兜底（取渐变底色作为投影色，垂直偏移）
-                    if (item.hasGradient)
-                    {
-                        SetupTextGradientFallback(go, item);
+                        // 描边：UILabel.effectStyle = Outline
+                        if (item.hasStroke)
+                        {
+                            SetupTextOutline(go, item);
+                        }
+
+                        // 渐变：UILabel 无原生渐变，用 Shadow 兜底
+                        if (item.hasGradient)
+                        {
+                            SetupTextGradientFallback(go, item);
+                        }
+                        break;
                     }
-                    break;
 
                 case "Button":
-                    EnsureComponent<Button>(go);
-                    //if (go.GetComponent<Image>() == null)
-                    //{
-                    //    var img = go.AddComponent<Image>();
-                    //    img.color = new Color(0, 0, 0, 0);
-                    //}
+                    EnsureComponent<UIButton>(go);
+                    // NGUI Button 需要碰撞体接收事件
+                    NGUITools.AddWidgetCollider(go);
                     break;
 
                 case "Item":
@@ -315,7 +316,7 @@ namespace PSDImporter
                     break;
 
                 case "Layout":
-                    // 纯布局容器，无需 Image
+                    // 纯布局容器，无需 UISprite
                     break;
 
                 case "ScrollRect":
@@ -326,7 +327,7 @@ namespace PSDImporter
                 default:
                     if (item.layoutType == "None")
                     {
-                        var img = EnsureComponent<Image>(go);
+                        var img = EnsureComponent<UISprite>(go);
                         SetupImage(img, item, psdData.psdAssetsFolder, config);
                     }
                     break;
@@ -412,10 +413,11 @@ namespace PSDImporter
                     if (templateItem.width > 0)
                     {
                         // Grid 特殊处理：直接改 CellSize
-                        var grid = go.GetComponent<GridLayoutGroup>();
+                        var grid = go.GetComponent<UIGrid>();
                         if (grid != null)
                         {
-                            grid.cellSize = new Vector2(templateItem.width, templateItem.height);
+                            grid.cellWidth = templateItem.width;
+                            grid.cellHeight = templateItem.height;
                         }
 
                         // 通用处理：遍历所有 Unity 子节点，强行改尺寸
@@ -434,8 +436,12 @@ namespace PSDImporter
                     }
                 }
 
-                // 强制刷新
-                LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
+                // 强制刷新：触发 UITable/UIGrid Reposition
+                var table = go.GetComponent<UITable>();
+                if (table != null) table.repositionNow = true;
+                var grid2 = go.GetComponent<UIGrid>();
+                if (grid2 != null) grid2.repositionNow = true;
+                NGUITools.MarkParentChanged();
             }
         }
 
@@ -477,9 +483,10 @@ namespace PSDImporter
 
         private static Transform GetRootCanvasTransform(Transform current)
         {
-            Canvas canvas = current.GetComponentInParent<Canvas>();
-            if (canvas != null) return canvas.transform;
-            if (current.root != null) return current.root;
+            // NGUI：找到 UIRoot 即可
+            UIRoot root = current != null ? current.GetComponentInParent<UIRoot>() : null;
+            if (root != null) return root.transform;
+            if (current != null && current.root != null) return current.root;
             return null;
         }
 
@@ -549,7 +556,7 @@ namespace PSDImporter
         }
 
         private static void ApplyTextLayoutAndPosition(
-            Text txt,
+            UILabel txt,
             PicData item,
             PSDData psdData,
             bool updatePosition,
@@ -562,7 +569,7 @@ namespace PSDImporter
                 return;
             }
 
-            RectTransform rt = txt.rectTransform;
+            RectTransform rt = txt.cachedTransform as RectTransform;
             if (rt == null)
             {
                 return;
@@ -571,7 +578,8 @@ namespace PSDImporter
             Vector2 layoutSize = CalculateTextLayoutSize(txt, item, previousSize, config);
             rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, layoutSize.x);
             rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, layoutSize.y);
-            Canvas.ForceUpdateCanvases();
+            // NGUI：触发文本重新排版
+            txt.ProcessText();
 
             if (!updatePosition || controlledByLayout)
             {
@@ -583,21 +591,23 @@ namespace PSDImporter
                 visualBounds = rt.rect;
             }
 
+            NGUIText.Alignment align = MapNguiAlignment(txt.alignment);
+
             if (IsChildOfLayoutItemContainer(rt.transform) &&
                 TryGetParentPsdData(rt.transform.parent, item, psdData, out var parentItem))
             {
-                ApplyPsdTextReferencePositionLocal(rt, visualBounds, item, parentItem, txt.alignment);
+                ApplyPsdTextReferencePositionLocal(rt, visualBounds, item, parentItem, align);
                 return;
             }
 
             Transform canvasRoot = GetRootCanvasTransform(rt.transform);
             if (canvasRoot != null)
             {
-                ApplyPsdTextReferencePosition(rt, canvasRoot, visualBounds, item, psdData, txt.alignment);
+                ApplyPsdTextReferencePosition(rt, canvasRoot, visualBounds, item, psdData, align);
             }
         }
 
-        private static Vector2 CalculateTextLayoutSize(Text txt, PicData item, Vector2 previousSize, PSDImportConfig config)
+        private static Vector2 CalculateTextLayoutSize(UILabel txt, PicData item, Vector2 previousSize, PSDImportConfig config)
         {
             float paddingX = config != null ? Mathf.Max(0f, config.textLayoutPaddingX) : 24f;
             float paddingY = config != null ? Mathf.Max(0f, config.textLayoutPaddingY) : 8f;
@@ -643,65 +653,60 @@ namespace PSDImporter
             return preferredWidth <= limit;
         }
 
-        private static float GetTextPreferredWidth(Text txt, float fallbackWidth)
+        private static float GetTextPreferredWidth(UILabel txt, float fallbackWidth)
         {
-            if (txt == null || txt.font == null || string.IsNullOrEmpty(txt.text))
+            if (txt == null || (txt.trueTypeFont == null && txt.bitmapFont == null) || string.IsNullOrEmpty(txt.text))
             {
                 return Mathf.Max(0f, fallbackWidth);
             }
 
             try
             {
-                float pixelsPerUnit = Mathf.Max(0.01f, txt.pixelsPerUnit);
-                TextGenerator generator = txt.cachedTextGeneratorForLayout;
-                TextGenerationSettings widthSettings = txt.GetGenerationSettings(Vector2.zero);
-                float preferredWidth = generator.GetPreferredWidth(txt.text, widthSettings) / pixelsPerUnit;
-                if (!float.IsNaN(preferredWidth) && !float.IsInfinity(preferredWidth) && preferredWidth > 0f)
+                txt.ProcessText();
+                Vector2 printed = txt.printedSize;
+                if (!float.IsNaN(printed.x) && !float.IsInfinity(printed.x) && printed.x > 0f)
                 {
-                    return Mathf.Max(fallbackWidth, preferredWidth);
+                    return Mathf.Max(fallbackWidth, printed.x);
                 }
             }
             catch (Exception)
             {
-                if (txt.preferredWidth > 0f)
-                {
-                    return Mathf.Max(fallbackWidth, txt.preferredWidth);
-                }
+                // ignore
             }
 
             return Mathf.Max(0f, fallbackWidth);
         }
 
-        private static float GetTextPreferredHeight(Text txt, float width, float fallbackHeight)
+        private static float GetTextPreferredHeight(UILabel txt, float width, float fallbackHeight)
         {
-            if (txt == null || txt.font == null || string.IsNullOrEmpty(txt.text))
+            if (txt == null || (txt.trueTypeFont == null && txt.bitmapFont == null) || string.IsNullOrEmpty(txt.text))
             {
                 return Mathf.Max(0f, fallbackHeight);
             }
 
             try
             {
-                float pixelsPerUnit = Mathf.Max(0.01f, txt.pixelsPerUnit);
-                TextGenerator generator = txt.cachedTextGeneratorForLayout;
-                TextGenerationSettings heightSettings = txt.GetGenerationSettings(new Vector2(Mathf.Max(1f, width), 0f));
-                float preferredHeight = generator.GetPreferredHeight(txt.text, heightSettings) / pixelsPerUnit;
-                if (!float.IsNaN(preferredHeight) && !float.IsInfinity(preferredHeight) && preferredHeight > 0f)
+                txt.ProcessText();
+                Vector2 printed = txt.printedSize;
+                if (!float.IsNaN(printed.y) && !float.IsInfinity(printed.y) && printed.y > 0f)
                 {
-                    return Mathf.Max(fallbackHeight, preferredHeight);
+                    return Mathf.Max(fallbackHeight, printed.y);
                 }
             }
             catch (Exception)
             {
-                if (txt.preferredHeight > 0f)
-                {
-                    return Mathf.Max(fallbackHeight, txt.preferredHeight);
-                }
+                // ignore
             }
 
             return Mathf.Max(0f, fallbackHeight);
         }
 
-        private static void ApplyPsdTextReferencePosition(RectTransform rt, Transform root, Rect visualBounds, PicData item, PSDData psdData, TextAnchor alignment)
+        private static NGUIText.Alignment MapNguiAlignment(NGUIText.Alignment align)
+        {
+            return align;
+        }
+
+        private static void ApplyPsdTextReferencePosition(RectTransform rt, Transform root, Rect visualBounds, PicData item, PSDData psdData, NGUIText.Alignment alignment)
         {
             if (rt == null || root == null || psdData == null)
             {
@@ -714,7 +719,7 @@ namespace PSDImporter
             ApplyWorldReferencePosition(rt, desiredWorld, localReference);
         }
 
-        private static void ApplyPsdTextReferencePositionLocal(RectTransform rt, Rect visualBounds, PicData item, PicData parentItem, TextAnchor alignment)
+        private static void ApplyPsdTextReferencePositionLocal(RectTransform rt, Rect visualBounds, PicData item, PicData parentItem, NGUIText.Alignment alignment)
         {
             if (rt == null || rt.parent == null)
             {
@@ -753,7 +758,7 @@ namespace PSDImporter
             SetAnchoredPositionFromLocal(rt, parentRt, localPos);
         }
 
-        private static Vector2 GetPsdTextReference(PicData item, int psdWidth, int psdHeight, TextAnchor alignment)
+        private static Vector2 GetPsdTextReference(PicData item, int psdWidth, int psdHeight, NGUIText.Alignment alignment)
         {
             Vector2 center = new Vector2(item.x - psdWidth * 0.5f, item.y - psdHeight * 0.5f);
             Rect rect = Rect.MinMaxRect(
@@ -764,7 +769,7 @@ namespace PSDImporter
             return GetTextReference(rect, alignment);
         }
 
-        private static Vector2 GetPsdTextReferenceLocal(PicData item, PicData parentItem, RectTransform parentRt, TextAnchor alignment)
+        private static Vector2 GetPsdTextReferenceLocal(PicData item, PicData parentItem, RectTransform parentRt, NGUIText.Alignment alignment)
         {
             Vector2 parentPivotOffset = parentRt != null
                 ? new Vector2(
@@ -780,7 +785,7 @@ namespace PSDImporter
             return GetTextReference(rect, alignment);
         }
 
-        private static Vector2 GetTextReference(Rect rect, TextAnchor alignment)
+        private static Vector2 GetTextReference(Rect rect, NGUIText.Alignment alignment)
         {
             float x = IsLeftAligned(alignment)
                 ? rect.xMin
@@ -791,32 +796,25 @@ namespace PSDImporter
             return new Vector2(x, y);
         }
 
-        private static bool IsLeftAligned(TextAnchor alignment)
+        private static bool IsLeftAligned(NGUIText.Alignment alignment)
         {
-            return alignment == TextAnchor.UpperLeft ||
-                   alignment == TextAnchor.MiddleLeft ||
-                   alignment == TextAnchor.LowerLeft;
+            return alignment == NGUIText.Alignment.Left;
         }
 
-        private static bool IsRightAligned(TextAnchor alignment)
+        private static bool IsRightAligned(NGUIText.Alignment alignment)
         {
-            return alignment == TextAnchor.UpperRight ||
-                   alignment == TextAnchor.MiddleRight ||
-                   alignment == TextAnchor.LowerRight;
+            return alignment == NGUIText.Alignment.Right;
         }
 
-        private static bool IsUpperAligned(TextAnchor alignment)
+        private static bool IsUpperAligned(NGUIText.Alignment alignment)
         {
-            return alignment == TextAnchor.UpperLeft ||
-                   alignment == TextAnchor.UpperCenter ||
-                   alignment == TextAnchor.UpperRight;
+            // UILabel 没有 vertical alignment 概念；统一按居中处理
+            return false;
         }
 
-        private static bool IsLowerAligned(TextAnchor alignment)
+        private static bool IsLowerAligned(NGUIText.Alignment alignment)
         {
-            return alignment == TextAnchor.LowerLeft ||
-                   alignment == TextAnchor.LowerCenter ||
-                   alignment == TextAnchor.LowerRight;
+            return false;
         }
 
         private static bool TryApplyPsdParentSkeletonRect(Transform target, PicData item, PSDData psdData)
@@ -966,8 +964,11 @@ namespace PSDImporter
                 child.SetSiblingIndex(siblingIndex++);
             }
 
-            LayoutRebuilder.ForceRebuildLayoutImmediate(layoutRt);
-            Canvas.ForceUpdateCanvases();
+            var table = layoutTransform.GetComponent<UITable>();
+            if (table != null) table.repositionNow = true;
+            var grid = layoutTransform.GetComponent<UIGrid>();
+            if (grid != null) grid.repositionNow = true;
+            NGUITools.MarkParentChanged();
         }
 
         private static List<PicData> GetDirectLayoutChildren(PicData layoutItem, PSDData psdData)
@@ -1157,8 +1158,10 @@ namespace PSDImporter
 
         private static bool HasEnabledLayoutGroup(Transform target)
         {
-            LayoutGroup layout = target != null ? target.GetComponent<LayoutGroup>() : null;
-            return layout != null && layout.isActiveAndEnabled;
+            UITable table = target != null ? target.GetComponent<UITable>() : null;
+            if (table != null && table.enabled) return true;
+            UIGrid grid = target != null ? target.GetComponent<UIGrid>() : null;
+            return grid != null && grid.enabled;
         }
 
         private static bool IsPsdLayoutNode(PsdSkeletonNode node)
@@ -1264,7 +1267,7 @@ namespace PSDImporter
 
         // --- 组件 Setup 方法 ---
 
-        public static void SetupText(UnityEngine.UI.Text txt, PicData item, PSDImportConfig config)
+        public static void SetupText(UILabel txt, PicData item, PSDImportConfig config)
         {
             SetupTextInternal(
                 txt,
@@ -1278,7 +1281,7 @@ namespace PSDImporter
         }
 
         private static void SetupTextInternal(
-            UnityEngine.UI.Text txt,
+            UILabel txt,
             string textContent,
             float fontSize,
             Color fontColor,
@@ -1290,23 +1293,21 @@ namespace PSDImporter
             txt.text = textContent;
             txt.fontSize = Mathf.RoundToInt(fontSize);
             txt.color = fontColor;
-            txt.horizontalOverflow = HorizontalWrapMode.Wrap;
-            txt.verticalOverflow = VerticalWrapMode.Overflow;
-            txt.supportRichText = true;
+            txt.overflowMethod = UILabel.Overflow.ResizeHeight;
+            txt.supportEncoding = true;
 
-            // 文本对齐映射：PS justification → Unity TextAnchor
-            // PS 只有水平对齐，垂直保持居中
+            // 文本对齐映射：PS justification → NGUIText.Alignment
             switch (textAlign)
             {
                 case "left":
-                    txt.alignment = TextAnchor.MiddleLeft;
+                    txt.alignment = NGUIText.Alignment.Left;
                     break;
                 case "right":
-                    txt.alignment = TextAnchor.MiddleRight;
+                    txt.alignment = NGUIText.Alignment.Right;
                     break;
                 case "center":
                 default:
-                    txt.alignment = TextAnchor.MiddleCenter;
+                    txt.alignment = NGUIText.Alignment.Center;
                     break;
             }
 
@@ -1318,50 +1319,47 @@ namespace PSDImporter
                 txt.color = c;
             }
 
-            // 行间距映射：PS leading(px) → Unity lineSpacing(倍率)
-            // Unity lineSpacing = 1 为默认行高；PS leading 包含字号+间距
-            // 换算：lineSpacingMultiplier = leading / fontSize
+            // 行间距映射：PS leading(px) → UILabel.spacing（int，倍数 * 100）
+            // NGUI UILabel.spacing 表示行间距像素
             if (lineSpacing > 0 && fontSize > 0)
             {
-                txt.lineSpacing = lineSpacing / fontSize;
+                txt.spacingY = Mathf.RoundToInt(lineSpacing - fontSize);
             }
 
             if (config != null && config.defaultTextFont != null)
             {
-                txt.font = config.defaultTextFont;
+                txt.trueTypeFont = config.defaultTextFont;
             }
-            else if (txt.font == null)
+            else if (txt.trueTypeFont == null && txt.bitmapFont == null)
             {
-                txt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+                txt.trueTypeFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             }
-            //txt.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, item.width);
-            //txt.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, item.height);
-            // 注意：不要在这里再次 SetSize，因为外面已经 Set 过了
+            txt.ProcessText();
         }
 
         /// <summary>
-        /// 挂载 UGUI 原生 Outline 描边效果。
-        /// 描边宽度映射：strokeSize(px) → effectDistance(x=y 统一值)
+        /// UILabel 描边：effectStyle = Outline，effectColor=strokeColor，effectDistance=strokeSize
         /// </summary>
         private static void SetupTextOutline(GameObject go, PicData item)
         {
-            var outline = go.GetComponent<Outline>() ?? go.AddComponent<Outline>();
+            var label = go.GetComponent<UILabel>();
+            if (label == null) return;
             float outlineWidth = Mathf.Max(0.5f, item.strokeSize);
-            outline.effectColor = item.strokeColor;
-            outline.effectDistance = new Vector2(outlineWidth, outlineWidth);
-            outline.useGraphicAlpha = true;
+            label.effectStyle = UILabel.Effect.Outline;
+            label.effectColor = item.strokeColor;
+            label.effectDistance = new Vector2(outlineWidth, outlineWidth);
         }
 
         /// <summary>
-        /// 渐变兜底：UGUI 原生无渐变 effect，用 Shadow 取渐变底色做投影，垂直偏移。
-        /// 仅保留视觉层次感，不还原真实渐变方向。
+        /// 渐变兜底：UILabel 无原生渐变，用 Shadow 取渐变底色做投影，垂直偏移。
         /// </summary>
         private static void SetupTextGradientFallback(GameObject go, PicData item)
         {
-            var shadow = go.GetComponent<Shadow>() ?? go.AddComponent<Shadow>();
-            shadow.effectColor = new Color(item.gradientBottomColor.r, item.gradientBottomColor.g, item.gradientBottomColor.b, 0.6f);
-            shadow.effectDistance = new Vector2(0f, Mathf.Max(1f, item.fontSize * 0.1f));
-            shadow.useGraphicAlpha = true;
+            var label = go.GetComponent<UILabel>();
+            if (label == null) return;
+            label.effectStyle = UILabel.Effect.Shadow;
+            label.effectColor = new Color(item.gradientBottomColor.r, item.gradientBottomColor.g, item.gradientBottomColor.b, 0.6f);
+            label.effectDistance = new Vector2(0f, Mathf.Max(1f, item.fontSize * 0.1f));
         }
 
 
@@ -1411,18 +1409,28 @@ namespace PSDImporter
             return null;
         }
 
-        private static void LoadSpriteFromPath(UnityEngine.UI.Image img, PicData item, string resolvedPath, bool hasSlice, Vector4 sliceBorder, PSDImportConfig config)
+        private static void LoadSpriteFromPath(UISprite img, PicData item, string resolvedPath, bool hasSlice, Vector4 sliceBorder, PSDImportConfig config)
         {
-            Sprite sp = AssetDatabase.LoadAssetAtPath<Sprite>(resolvedPath);
-            if (sp != null)
+            // NGUI：UISprite 从 atlas 取 sprite，而不是直接 LoadAssetAtPath<Sprite>
+            // atlas 由 BuildAtlas 统一生成，spriteName 用 pngName 去扩展名
+            if (img.atlas == null)
             {
-                img.sprite = sp;
-                img.type = hasSlice ? Image.Type.Sliced : Image.Type.Simple;
-                img.color = Color.white; // 颜色清洗
+                img.atlas = GetCachedAtlas();
+            }
+            if (img.atlas != null)
+            {
+                img.spriteName = System.IO.Path.GetFileNameWithoutExtension(item.pngName);
+                img.type = hasSlice ? UISprite.Type.Sliced : UISprite.Type.Simple;
+                img.color = Color.white;
+                if (hasSlice)
+                {
+                    // 通过 NGUI UISprite.SetBorder 设置九宫切片
+                    img.border = sliceBorder;
+                }
             }
         }
 
-        private static bool SetupImageWithReuse(UnityEngine.UI.Image img, PicData item, string assetFolder, PSDImportConfig config)
+        private static bool SetupImageWithReuse(UISprite img, PicData item, string assetFolder, PSDImportConfig config)
         {
             string pngpath = PSDImageReuseLogStore.BuildPngPath(item, assetFolder);
             bool skipAutoSlice = PSDTagUtility.HasTag(item.pngName, "@Bg");
@@ -1507,7 +1515,7 @@ namespace PSDImporter
             return true;
         }
 
-        public static void SetupImage(UnityEngine.UI.Image img, PicData item, string assetFolder, PSDImportConfig config)
+        public static void SetupImage(UISprite img, PicData item, string assetFolder, PSDImportConfig config)
         {
             if (SetupImageWithReuse(img, item, assetFolder, config))
             {
@@ -1573,6 +1581,103 @@ namespace PSDImporter
             }
         }
 
+        // --- Atlas 构建 ---
+
+        private static UIAtlas _cachedAtlas;
+
+        private static UIAtlas GetCachedAtlas()
+        {
+            return _cachedAtlas;
+        }
+
+        /// <summary>
+        /// 收集 PSD 导出的所有 PNG，调 NGUI AtlasMaker 生成 UIAtlas 资产，缓存引用。
+        /// 必须在所有 SetupSprite 之前完成。
+        /// </summary>
+        private static void BuildAtlas(PSDData psdData, PSDImportConfig config)
+        {
+            if (psdData == null || string.IsNullOrEmpty(psdData.psdAssetsFolder)) return;
+
+            string assetsFolder = psdData.psdAssetsFolder;
+            string absFolder = PSDAssetDeduper.GetAbsolutePath(assetsFolder);
+            if (!Directory.Exists(absFolder)) return;
+
+            // 收集所有 PNG 的 Unity 相对路径
+            var pngPaths = new List<string>();
+            try
+            {
+                var files = Directory.GetFiles(absFolder, "*.png", SearchOption.AllDirectories);
+                foreach (var f in files)
+                {
+                    string relative = f.Replace("\\", "/");
+                    int idx = relative.IndexOf("Assets/", StringComparison.OrdinalIgnoreCase);
+                    if (idx >= 0)
+                    {
+                        pngPaths.Add(relative.Substring(idx));
+                    }
+                }
+            }
+            catch (Exception) { /* ignore */ }
+
+            if (pngPaths.Count == 0) return;
+
+            // NGUI AtlasMaker.Create 生成 UIAtlas 资产
+            // 签名: AtlasMaker.Create(string atlasName, List<Texture2D> textures)
+            // 也可传 Sprite 列表；不同 NGUI 版本签名不同，此处用反射兜底调用
+            string atlasName = !string.IsNullOrEmpty(psdData.psdName) ? psdData.psdName : new DirectoryInfo(absFolder).Name;
+            string atlasPath = assetsFolder + "/Atlas.asset";
+            atlasPath = atlasPath.Replace("\\", "/");
+
+            try
+            {
+                var textures = new List<Texture2D>();
+                foreach (var p in pngPaths)
+                {
+                    var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(p);
+                    if (tex != null) textures.Add(tex);
+                }
+                if (textures.Count == 0) return;
+
+                // 反射调用 AtlasMaker.Create 以兼容不同 NGUI 版本
+                var atlasMakerType = System.Type.GetType("AtlasMaker, Assembly-CSharp");
+                if (atlasMakerType == null)
+                {
+                    // 查找程序集
+                    foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        var t = asm.GetType("AtlasMaker");
+                        if (t != null) { atlasMakerType = t; break; }
+                    }
+                }
+                if (atlasMakerType == null)
+                {
+                    Debug.LogWarning("[PSD2NGUI] AtlasMaker type not found. Skip atlas generation. Ensure NGUI is imported.");
+                    return;
+                }
+
+                var method = atlasMakerType.GetMethod("Create", new System.Type[] { typeof(string), typeof(List<Texture2D>) });
+                UIAtlas atlas = null;
+                if (method != null)
+                {
+                    atlas = method.Invoke(null, new object[] { atlasName, textures }) as UIAtlas;
+                }
+                if (atlas == null)
+                {
+                    Debug.LogWarning("[PSD2NGUI] AtlasMaker.Create returned null. Atlas generation skipped.");
+                    return;
+                }
+
+                // 保存为资产
+                AssetDatabase.CreateAsset(atlas, atlasPath);
+                AssetDatabase.SaveAssets();
+                _cachedAtlas = atlas;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[PSD2NGUI] BuildAtlas failed: {ex.Message}");
+            }
+        }
+
         // --- 通用辅助 ---
 
         private static T EnsureComponent<T>(GameObject go) where T : UnityEngine.Component
@@ -1589,8 +1694,8 @@ namespace PSDImporter
 
         private static void RemoveConflictingUiComponents<T>(GameObject go) where T : UnityEngine.Component
         {
-            if (typeof(T) == typeof(UnityEngine.UI.Image)) { DestroyIfExists<UnityEngine.UI.Text>(go); }
-            else if (typeof(T) == typeof(UnityEngine.UI.Text)) { DestroyIfExists<UnityEngine.UI.Image>(go); }
+            if (typeof(T) == typeof(UISprite)) { DestroyIfExists<UILabel>(go); }
+            else if (typeof(T) == typeof(UILabel)) { DestroyIfExists<UISprite>(go); }
         }
 
         private static void DestroyIfExists<T>(GameObject go) where T : UnityEngine.Component
@@ -1630,19 +1735,14 @@ namespace PSDImporter
 
         private static RectTransform CreateCanvasRoot(string name)
         {
-            var go = new GameObject(string.IsNullOrEmpty(name) ? "Canvas" : name, typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
-            int uiLayer = LayerMask.NameToLayer("UI");
-            if (uiLayer >= 0) go.layer = uiLayer;
-
-            var canvas = go.GetComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-
-            var scaler = go.GetComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
-            scaler.scaleFactor = 1f;
-            scaler.referencePixelsPerUnit = 100f;
-
-            return go.GetComponent<RectTransform>();
+            // NGUI：UIRoot + Camera + UICamera + UIManager 由 NGUITools.CreateUI 一次性创建
+            // NGUITools.CreateUI(false) 返回 UIRoot 的 GameObject（false = 不立即创建 UIPanel）
+            GameObject rootGo = NGUITools.CreateUI(false);
+            if (!string.IsNullOrEmpty(name))
+            {
+                rootGo.name = name;
+            }
+            return rootGo.GetComponent<RectTransform>();
         }
 
         private static T CreateGo<T>(string goName, Transform parent, string LayerName = null) where T : UnityEngine.Component

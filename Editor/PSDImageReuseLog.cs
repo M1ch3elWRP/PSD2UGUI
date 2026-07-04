@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace PSDImporter
 {
@@ -181,18 +180,20 @@ namespace PSDImporter
             var log = Get(item);
             if (log != null) return log;
 
-            var image = node != null ? node.GetComponent<Image>() : null;
-            if (image == null || image.sprite == null) return null;
+            var image = node != null ? node.GetComponent<UISprite>() : null;
+            if (image == null || image.atlas == null || string.IsNullOrEmpty(image.spriteName)) return null;
 
-            string spritePath = AssetDatabase.GetAssetPath(image.sprite);
+            // NGUI UISprite 通过 atlas + spriteName 引用；spritePath 用 atlas 资产路径 + spriteName
+            string atlasPath = AssetDatabase.GetAssetPath(image.atlas);
+            string spritePath = !string.IsNullOrEmpty(atlasPath) ? $"{atlasPath}/{image.spriteName}" : image.spriteName;
             string expectedPath = BuildPngPath(item, assetFolder);
-            bool hasSlice = image.type == Image.Type.Sliced || image.sprite.border.sqrMagnitude > 0f;
+            bool hasSlice = image.type == UISprite.Type.Sliced || image.border.sqrMagnitude > 0f;
             string kind = PSDImageReuseSourceKind.CurrentImage.ToString();
             bool hasTint = false;
 
-            if (!string.IsNullOrEmpty(spritePath))
+            if (!string.IsNullOrEmpty(atlasPath))
             {
-                if (string.Equals(NormalizeAssetPath(spritePath), NormalizeAssetPath(expectedPath), StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(NormalizeAssetPath(atlasPath), NormalizeAssetPath(expectedPath), StringComparison.OrdinalIgnoreCase))
                 {
                     kind = PSDImageReuseSourceKind.OriginalExport.ToString();
                 }
@@ -207,10 +208,10 @@ namespace PSDImporter
                 sourceKind = kind,
                 spritePath = spritePath,
                 originalExportPath = expectedPath,
-                resolvedAssetPath = spritePath,
-                canonicalExportPath = spritePath,
+                resolvedAssetPath = atlasPath,
+                canonicalExportPath = atlasPath,
                 hasSlice = hasSlice,
-                sliceBorder = hasSlice ? PSDImageBorderLog.From(image.sprite.border) : null,
+                sliceBorder = hasSlice ? PSDImageBorderLog.From(image.border) : null,
                 hasTint = hasTint,
                 tintColor = hasTint ? PSDImageTintLog.From(image.color) : null,
                 confidence = 1f,
