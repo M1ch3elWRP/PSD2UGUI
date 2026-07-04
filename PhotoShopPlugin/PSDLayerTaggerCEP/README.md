@@ -1,6 +1,6 @@
 # PSD Layer Tagger CEP
 
-Photoshop 2020 CEP panel for quickly adding PSDTools suffix tags to selected layers.
+Photoshop 2020 CEP panel for quickly adding PSD2NGUI suffix tags to selected layers.
 
 ## Why CEP
 
@@ -49,5 +49,5 @@ It also enables unsigned CEP extensions in HKCU for CSXS 9/10/11.
 
 - The panel renames currently selected Photoshop layers via Action Manager by layer ID.
 - Multi-select is supported.
-- Default mode replaces existing known PSDTools tags at the end of the layer name.
+- Default mode replaces existing known PSD2NGUI tags at the end of the layer name.
 - Append mode only removes the same tag before appending it.

@@ -54,7 +54,7 @@ namespace PSDImporter
             public RegressionCase[] cases;
         }
 
-        [MenuItem("PSDTools/Debug/Run Match Scoring Regression")]
+        [MenuItem("PSD2NGUI/Debug/Run Match Scoring Regression")]
         public static void RunFromMenu()
         {
             bool ok = RunRegression();

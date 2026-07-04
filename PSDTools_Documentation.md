@@ -1,4 +1,4 @@
-# PSDTools 使用说明与技术文档
+# PSD2NGUI 使用说明与技术文档
 
 本文件包含：工具流（流程 + 配置说明）/ 注意事项（Q&A）/ 技术文档（关键技术点与方法说明）。
 
@@ -6,18 +6,18 @@
 
 ### 1.1 Photoshop 导出流程
 1) 在 PSD 中按规则给图层或组命名（带 `@` 后缀）。  
-2) 运行脚本 `Assets/PSDTools/Editor/PhotoShopScript/ExportToPNG.jsx`（或同步到 PS 脚本目录后在 PS 内运行）。  
+2) 运行脚本 `Assets/PSD2NGUI/Editor/PhotoShopScript/ExportToPNG.jsx`（或同步到 PS 脚本目录后在 PS 内运行）。  
 3) 导出得到：  
    - PNG 切图  
    - `.ps.data`（包含图层信息的 JSON 数据）
 
 ### 1.2 Unity 端新建模式（Create）
-1) 打开菜单：`PSDTools/Create UI From PSD`。  
+1) 打开菜单：`PSD2NGUI/Create UI From PSD`。  
 2) 拖入 `.ps.data`，按需指定 `PSDImportConfig`。  
-3) 点击 **Create UI**，工具会直接生成以 **Canvas 根节点**为入口的结构。  
+3) 点击 **Create UI**，工具会先导出 PNG → 调用 NGUI AtlasMaker 生成 Atlas → 再以 **UIRoot 根节点**为入口逐层生成节点。  
 
 ### 1.3 Unity 端还原模式（Restore）
-1) 打开菜单：`PSDTools/Restore UI From PSD`。  
+1) 打开菜单：`PSD2NGUI/Restore UI From PSD`。  
 2) 拖入 `.ps.data`，指定 Target Root（白膜 Prefab 根节点）。  
 3) 可视化模式下点击 **智能匹配** 或手动绑定。  
 4) 点击 **Apply All (Save)** 写回所有节点属性。  
@@ -26,28 +26,28 @@
 
 以下后缀由导出脚本识别并决定类型/容器行为（部分会影响 Unity 组件与布局行为）：
 
-- `@Img`：普通 Image 图层。  
-- `@ImgNoTrim`：Image 图层，按图层原始边界导出（不依赖 Trim）。  
-- `@Btn`：Button 容器。  
-- `@H`：Horizontal Layout 容器。  
-- `@V`：Vertical Layout 容器。  
-- `@G`：Grid Layout 容器。  
+- `@Img`：普通 UISprite 图层。  
+- `@ImgNoTrim`：UISprite 图层，按图层原始边界导出（不依赖 Trim）。  
+- `@Btn`：UIButton 容器。  
+- `@H`：Horizontal 容器（UITable）。  
+- `@V`：Vertical 容器（UITable）。  
+- `@G`：Grid 容器（UIGrid）。  
 - `@Item`：列表 Item 容器/模板。  
-- `@ScrollRect`: scroll-list root. Use `@ScrollRect@V`, `@ScrollRect@H`, or `@ScrollRect@G`; alternatively put a direct `Content@V/@H/@G` group under it. Create mode generates normal `ScrollRect/Viewport/Content`; Restore mode matches existing ScrollRect roots and routes children to Content.
+- `@ScrollRect`: scroll-list root. Use `@ScrollRect@V`, `@ScrollRect@H`, or `@ScrollRect@G`; alternatively put a direct `Content@V/@H/@G` group under it. Create mode generates normal `UIScrollView/Viewport/Content`; Restore mode matches existing UIScrollView roots and routes children to Content.
 
 导出脚本选项：
 - **Only Export @ Tagged**：勾选后仅导出带 `@` 的图层/组。  
 
 ## 3. 配置说明（PSDImportConfig）
 
-配置资产路径：`Assets/PSDTools/Editor/PSDImportConfig.asset`  
+配置资产路径：`Assets/PSD2NGUI/Editor/PSDImportConfig.asset`  
 
 ### 3.1 匹配评分相关
 - `maxDistanceError`：位置允许偏差（像素）。  
 - `maxSizeDiff`：尺寸允许偏差（宽高差绝对值之和）。  
 - `weightPosition`：位置得分权重。  
 - `weightSize`：尺寸得分权重。  
-- `weightType`：类型得分权重（Button/Text/Image/Layout/Item）。  
+- `weightType`：类型得分权重（UIButton/UILabel/UISprite/Layout/Item）。  
 
 ### 3.2 调试
 - `showDetailedLog`：输出详细匹配日志（Top5 候选、加权分、跳过原因等）。  
@@ -63,28 +63,16 @@
 - `dedupeMoveDuplicates`：将重复 PNG 移动到子目录（不删除）。  
 - `dedupeMoveFolder`：重复 PNG 目标子目录名。  
 
-
-### 3.7 组件覆盖
-- `imageComponent`：Image 覆盖组件（需继承 UnityEngine.UI.Image）。  
-- `buttonComponent`：Button 覆盖组件。  
-- `textComponent`：Text 覆盖组件。  
-
-### 3.8 字体覆盖
-- `defaultTextFont`：所有 Text 组件统一字体。  
-
-### 3.9 Layout 覆盖
-- `horizontalLayoutComponent`：@H 对应 Layout 组件。  
-- `verticalLayoutComponent`：@V 对应 Layout 组件。  
-- `gridLayoutComponent`：@G 对应 Layout 组件。  
+### 3.6 字体覆盖
+- `defaultTextFont`：所有 UILabel 组件统一 trueTypeFont。  
 
 ## 4. 注意事项 / Q&A
 
 **Q1：为什么位置或尺寸不对？**  
-A：还原逻辑以 PSD 中心坐标为基准换算到目标节点 Anchor 下的 `anchoredPosition`。如果父级有 LayoutGroup 或已做了适配锚点，会影响坐标表现。  
+A：还原逻辑以 PSD 中心坐标为基准换算到目标节点 Anchor 下的 `anchoredPosition`。如果父级有 UITable/UIGrid 或已做了适配锚点，会影响坐标表现。  
 
 **Q2：隐藏节点是否参与匹配？**  
 A：由 `skipInactiveMatch` 控制，勾选后会跳过 `inactive` 节点。  
-
 
 **Q3：重复图片怎么处理？**  
 A：`dedupeSprites` 按像素哈希去重；`dedupeMoveDuplicates` 会将重复 PNG 移到指定子目录。  
@@ -97,13 +85,13 @@ A：脚本会对组或智能对象执行合并/栅格化来避免黑图；如异
 ### 5.1 关键模块
 - `ExportToPNG.jsx`：PS 端导出 PNG + `.ps.data`。  
 - `PSDLoader`：读取 `.ps.data` 并解析为 `PSDData`。  
-- `PSDCreateor`：新建/还原入口，负责节点创建与同步。  
+- `PSDCreateor`：新建/还原入口，负责节点创建与同步（NGUI 组件 + Atlas）。  
 - `PSDImportWorkflow`：Create/Restore 执行编排与参数校验。  
 - `PsdCreateWindow`：Create 模式窗口（仅展示与触发）。  
 - `VisualBindingRestoreService`：还原模式的匹配与应用服务。  
 - `VisualBindingWindow`：Restore 模式窗口（可视化还原与匹配 UI）。  
 - `PSDMatchingStrategy`：匹配评分计算与最佳候选查找。  
-- `PSDLayoutTool`：LayoutGroup 参数计算与应用。  
+- `PSDLayoutTool`：UITable/UIGrid 参数计算与应用。  
 - `PSDGroupTool`：空组对齐工具。  
 - `PSDAssetDeduper`：资源去重与路径规范化。  
 - `PSDNineSliceUtility`：九宫切片检测。  
@@ -122,9 +110,10 @@ A：脚本会对组或智能对象执行合并/栅格化来避免黑图；如异
 若存在历史绑定记录，则以 ID 绑定优先，直接锁定目标节点（得分 9999）。  
 
 ### 5.4 关键方法注释（入口与影响点）
-- `PSDCreateor.CreateUGUI_GenerateMode`：新建模式入口，创建 Canvas 根并逐层生成节点。  
+- `PSDCreateor.CreateNGUI_GenerateMode`：新建模式入口，创建 UIRoot 根并逐层生成节点。  
 - `PSDCreateor.RefreshNode`：同步节点核心入口，负责尺寸、位置、组件、Layout。  
 - `PSDCreateor.ApplyPsdPosition / ApplyPsdPositionLocal`：坐标换算，保持 Anchor 不变。  
+- `PSDCreateor.BuildAtlas`：导出 PNG 后调用 NGUI AtlasMaker 生成 UIAtlas 资产。  
 - `PSDMatchingStrategy.CalculateMatchScore`：基础评分公式。  
 - `VisualBindingWindow.RunAutoMatch`：可视化匹配入口，支持详细日志输出。  
 - `PSDNineSliceUtility.TryDetectBorder`：自动检测大面积重复像素并设置切片。  
@@ -150,11 +139,10 @@ A：脚本会对组或智能对象执行合并/栅格化来避免黑图；如异
    - `PSDMatchFeatureExtractor` 的 `distNorm/sizeNorm/sameDepth/anchorDiff` 由 `PSDMatchScoring.BuildGeometryBreakdown` 提供，确保与规则路径共享同一几何结果。
 
 ### 5.7 编辑器侧静态回归样例
-- 回归入口：`PSDTools/Debug/Run Match Scoring Regression`。
-- Fixture：`Editor/Fixtures/PSDMatchScoringRegression.fixture.json`。
+- 回归入口：`PSD2NGUI/Debug/Run Match Scoring Regression`。  
+- Fixture：`Editor/Fixtures/PSDMatchScoringRegression.fixture.json`。  
 - 校验目标：同一组几何输入下，以下三条路径输出一致：
   1. `PSDMatchScoring.Evaluate`（统一评分入口）
   2. `PSDMatchingStrategy.CalculateMatchScoreFromGeometry`
   3. `VisualBindingRestoreService.CalculateScoreFromGeometry`
 - 同时校验 ML 特征中的几何项（dist/size/depth/anchor）与统一几何拆解一致。
-

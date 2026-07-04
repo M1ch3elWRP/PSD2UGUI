@@ -30,7 +30,7 @@
             ensureDocument();
             api._pending = { action: "applyTag", tag: String(tag || ""), mode: String(mode || "set") };
             api._result = null;
-            app.activeDocument.suspendHistory("PSDTools Tag " + api._pending.tag, "$._PSDLayerTagger._runPending()");
+            app.activeDocument.suspendHistory("PSD2NGUI Tag " + api._pending.tag, "$._PSDLayerTagger._runPending()");
             return toJson(api._result || ok("No change."));
         } catch (e) {
             return toJson(fail(e.message || String(e)));
@@ -42,7 +42,7 @@
             ensureDocument();
             api._pending = { action: "clearTags" };
             api._result = null;
-            app.activeDocument.suspendHistory("PSDTools Clear Tags", "$._PSDLayerTagger._runPending()");
+            app.activeDocument.suspendHistory("PSD2NGUI Clear Tags", "$._PSDLayerTagger._runPending()");
             return toJson(api._result || ok("No change."));
         } catch (e) {
             return toJson(fail(e.message || String(e)));

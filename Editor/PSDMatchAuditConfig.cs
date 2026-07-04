@@ -9,7 +9,7 @@ namespace PSDImporter
         ApplyAndSave
     }
 
-    [CreateAssetMenu(fileName = "PSDMatchAuditConfig", menuName = "PSDTools/Match Audit Config")]
+    [CreateAssetMenu(fileName = "PSDMatchAuditConfig", menuName = "PSD2NGUI/Match Audit Config")]
     public class PSDMatchAuditConfig : ScriptableObject
     {
         [Header("Inputs")]

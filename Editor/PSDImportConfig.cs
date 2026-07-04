@@ -3,7 +3,7 @@ using UnityEditor;
 
 namespace PSDImporter
 {
-    [CreateAssetMenu(fileName = "PSDImportConfig", menuName = "PSDTools/Import Config")]
+    [CreateAssetMenu(fileName = "PSDImportConfig", menuName = "PSD2NGUI/Import Config")]
     public class PSDImportConfig : ScriptableObject
     {
         [Header("评分阈值 (超过此值该项得分为0)")]

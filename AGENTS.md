@@ -1,14 +1,14 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-The PSD restoration workspace is `D:\project\codesvn_for_import\Assets\_OpenCode\TZUI\PS`; this package lives under `Assets/_OpenCode/TZUI/PS/PSDTools`. Core Unity Editor code is in `Editor/`, including PSD import, restore matching, layout utilities, and debug runners. Machine-learning match helpers and data are in `ML/` and `ML/Editor/`. Photoshop export automation is split between `PhotoShopScript/ExportToPNG.jsx` and the CEP panel in `PhotoShopPlugin/PSDLayerTaggerCEP/`. Match logs are written to `Log/`; avoid treating generated logs as source unless they document a regression. Unity assets such as `.asset`, `.json`, and `.meta` files are part of the package state.
+The PSD restoration workspace is `D:\project\codesvn_for_import\Assets\_OpenCode\TZUI\PS`; this package lives under `Assets/_OpenCode/TZUI/PS/PSD2NGUI`. Core Unity Editor code is in `Editor/`, including PSD import, restore matching, layout utilities, and debug runners. Machine-learning match helpers and data are in `ML/` and `ML/Editor/`. Photoshop export automation is split between `PhotoShopScript/ExportToPNG.jsx` and the CEP panel in `PhotoShopPlugin/PSDLayerTaggerCEP/`. Match logs are written to `Log/`; avoid treating generated logs as source unless they document a regression. Unity assets such as `.asset`, `.json`, and `.meta` files are part of the package state. The package assumes the host Unity project already imports NGUI; this repo does not bundle NGUI source.
 
 ## Build, Test, and Development Commands
 `package.json` is a Unity package manifest, not an npm script entry point.
 
-- Unity menu `PSDTools/Create UI From PSD`: open the PSD-to-UGUI creation workflow.
-- Unity menu `PSDTools/Restore UI From PSD`: open restore/binding workflow.
-- Unity menu `PSDTools/Debug/Run Match Scoring Regression`: run scoring regression fixture checks.
+- Unity menu `PSD2NGUI/Create UI From PSD`: open the PSD-to-NGUI creation workflow.
+- Unity menu `PSD2NGUI/Restore UI From PSD`: open restore/binding workflow.
+- Unity menu `PSD2NGUI/Debug/Run Match Scoring Regression`: run scoring regression fixture checks.
 - `node --check PhotoShopScript/ExportToPNG.jsx`: syntax-check the Photoshop export script.
 - `node --check PhotoShopPlugin/PSDLayerTaggerCEP/js/app.js`: syntax-check CEP panel logic.
 
@@ -18,9 +18,9 @@ After C# changes, refresh assets and force Unity script compilation; verify zero
 Use 4-space indentation for C#. Follow Unity conventions: PascalCase for types and public methods, camelCase for locals and private fields, and keep project classes `PSD`-prefixed (`PSDLoader`, `PSDMatchGeometry`). Keep editor-only code under `Editor/`. Preserve Unity `.meta` files and GUIDs when moving assets. For JSX/CEP JavaScript, follow the existing style and keep Photoshop-specific logic isolated from Unity C#.
 
 ## Testing Guidelines
-There is no standalone test runner configured. Prefer targeted Unity menu smoke tests in `PSDTools/Debug/` and regression fixtures under `Editor/Fixtures/`. For restore or layout changes, test both scene instances and prefab assets, then inspect generated match logs only when needed.
+There is no standalone test runner configured. Prefer targeted Unity menu smoke tests in `PSD2NGUI/Debug/` and regression fixtures under `Editor/Fixtures/`. For restore or layout changes, test both scene instances and prefab assets, then inspect generated match logs only when needed.
 
-For agent-driven restore debugging, use `PSDTools/Agent/Run Restore Audit` or `PSDTools/Debug/Run Match Audit Smoke`. The smoke test should log `[MatchAuditSmoke] PASS` and export an audit package under `Log/Audit/`.
+For agent-driven restore debugging, use `PSD2NGUI/Agent/Run Restore Audit` or `PSD2NGUI/Debug/Run Match Audit Smoke`. The smoke test should log `[MatchAuditSmoke] PASS` and export an audit package under `Log/Audit/`.
 
 ## Current Restore Matching Optimizations
 As of 2026-04-29, the first- and second-priority matching accuracy work plus the current audit/debug safeguards are part of this package.
@@ -30,7 +30,7 @@ First-priority restore changes:
 - Size scoring uses relative width/height difference with an absolute `maxSizeDiff` fuse. Position scoring uses a soft threshold instead of a hard cliff.
 - `sameDepth` and `anchorDiff` now feed weighted score terms through `PSDImportConfig.weightDepth` and `PSDImportConfig.weightAnchor`.
 - `passThresholds` is based on geometry signal plus `minAcceptScore`, not just one loose geometry field.
-- `PSDMatchTypeUtility` centralizes type compatibility. `Image + Selectable` remains compatible with PSD image layers, and PSD button layers can match `Button`, `Toggle`, `Slider`, `Scrollbar`, `InputField`, `Dropdown`, or other `Selectable` nodes with graded scores.
+- `PSDMatchTypeUtility` centralizes type compatibility. `UISprite + UIWidget` remains compatible with PSD image layers, and PSD button layers can match `UIButton`, `UIToggle`, `UISlider`, `UIScrollBar`, `UIInput`, `UIPopupList`, or other `UIWidget` nodes with graded scores.
 - `PSDTagUtility` and `PhotoShopScript/ExportToPNG.jsx` use exact tokenized `@tag` matching. Do not reintroduce substring checks such as `indexOf("@Btn")`.
 - `PSDBindingData` stores paths relative to the restore root, so saved ID history paths should not include the root object name.
 - ID history matching is controlled by `PSDImportConfig.enableIdHistoryMatch` and is disabled by default during testing. Enable it only when the binding asset history is trusted.
@@ -44,18 +44,18 @@ Second-priority restore changes:
 - The Visual Binding UI shows the top1/top2 margin. Low-confidence matches are marked with `!` and are not auto-confirmed.
 - `PSDMatchLogExporter` includes the new matching config fields, pruning counters, hierarchy penalty counters, confidence margin, and low-confidence status.
 - `enableGeometryReject` is enabled by default and rejects candidates only when both center distance and relative size error are clearly bad, preventing stale nearby-ish nodes from winning by type or history.
-- `@ScrollRect` maps a PSD group to a scroll-list root. Create mode generates a normal `ScrollRect/Viewport/Content` structure; restore mode matches existing `ScrollRect` roots and routes PSD list children to `Content`.
-- Image reuse runs after target PSD size is known. Default mode exact-reuses local duplicates; existing sprite `spriteBorder` wins over auto 9-slice.
-- When a matched child is controlled by a parent `LayoutGroup`, Apply can sync the PSD skeleton parent rect onto the Unity parent container before restoring the child. This fixes Award-like group offset/size drift.
+- `@ScrollRect` maps a PSD group to a scroll-list root. Create mode generates a normal `UIScrollView/Viewport/Content` structure; restore mode matches existing `UIScrollView` roots and routes PSD list children to `Content`.
+- Image reuse runs after target PSD size is known. Default mode exact-reuses local duplicates; existing atlas sprite border wins over auto 9-slice.
+- When a matched child is controlled by a parent `UITable`/`UIGrid`, Apply can sync the PSD skeleton parent rect onto the Unity parent container before restoring the child. This fixes Award-like group offset/size drift.
 
 ML matching is still intentionally disabled in `VisualBindingRestoreService`; do not re-enable it unless the user explicitly asks for the third-priority ML phase.
 
 ## Agent Restore Audit Workflow
 As of 2026-04-29, the package includes an agent-oriented audit chain for identifying wrong restore matches.
 
-- `PSDMatchAuditConfig` is the configurable entrypoint. Default asset path: `Assets/_OpenCode/TZUI/PS/PSDTools/Editor/PSDMatchAuditConfig.asset`.
-- `PSDTools/Agent/Create Default Audit Config` creates/selects the default config.
-- `PSDTools/Agent/Run Restore Audit` runs matching from the config. In DryRun it also simulates Apply on loaded prefab contents without saving assets, so layout/prefab side effects are visible in the audit image.
+- `PSDMatchAuditConfig` is the configurable entrypoint. Default asset path: `Assets/_OpenCode/TZUI/PS/PSD2NGUI/Editor/PSDMatchAuditConfig.asset`.
+- `PSD2NGUI/Agent/Create Default Audit Config` creates/selects the default config.
+- `PSD2NGUI/Agent/Run Restore Audit` runs matching from the config. In DryRun it also simulates Apply on loaded prefab contents without saving assets, so layout/prefab side effects are visible in the audit image.
 - Audit packages export `audit_summary.json`, `all_layers.json`, `suspects.json`, `agent_review_template.json`, `template_psd.png` when a template exists, `layer_composite.png`, `full_overlay.png`, and cropped `suspects/*.png`.
 - `VisualBindingWindow` also has `导出审计包`, which exports from the current loaded binding state.
 - Audit truth uses `template_psd.png` when available. `layer_composite.png` is only the reconstructed exported-layer view and can miss text, common prefab visuals, and scene-only content.
@@ -66,7 +66,7 @@ As of 2026-04-29, the package includes an agent-oriented audit chain for identif
 - The intended agent loop is: run audit, inspect `audit_summary.json` and `all_layers.json`, inspect suspect PNGs visually, fill/update `agent_review_template.json` verdicts, identify cause tags, patch scoring/type/hierarchy/export/apply logic, rerun audit and regression.
 
 ## Commit & Pull Request Guidelines
-Git history was not inspected in this environment. Use concise imperative commits such as `fix: restore prefab matching geometry` or `docs: update PSDTools guide`. PRs should include the Unity version, affected workflow, reproduction steps, validation performed, and screenshots or GIFs for UI/layout changes.
+Git history was not inspected in this environment. Use concise imperative commits such as `fix: restore prefab matching geometry` or `docs: update PSD2NGUI guide`. PRs should include the Unity version, affected workflow, reproduction steps, validation performed, and screenshots or GIFs for UI/layout changes.
 
 ## Agent-Specific Notes
 Do not sync scripts into a local Photoshop installation unless explicitly requested. In restricted environments, avoid repeated git/network calls and use Unity MCP compilation checks when available.

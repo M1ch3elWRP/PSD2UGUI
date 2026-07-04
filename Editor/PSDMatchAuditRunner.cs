@@ -220,7 +220,7 @@ namespace PSDImporter
             public int pixelH;
         }
 
-        [MenuItem("PSDTools/Agent/Create Default Audit Config", priority = 300)]
+        [MenuItem("PSD2NGUI/Agent/Create Default Audit Config", priority = 300)]
         public static void CreateDefaultAuditConfigMenu()
         {
             PSDMatchAuditConfig config = GetOrCreateDefaultConfig();
@@ -228,7 +228,7 @@ namespace PSDImporter
             EditorGUIUtility.PingObject(config);
         }
 
-        [MenuItem("PSDTools/Agent/Run Restore Audit", priority = 301)]
+        [MenuItem("PSD2NGUI/Agent/Run Restore Audit", priority = 301)]
         public static void RunRestoreAuditMenu()
         {
             PSDMatchAuditConfig config = GetActiveOrDefaultConfig();
@@ -239,7 +239,7 @@ namespace PSDImporter
             }
         }
 
-        [MenuItem("PSDTools/Debug/Run Match Audit Smoke", priority = 203)]
+        [MenuItem("PSD2NGUI/Debug/Run Match Audit Smoke", priority = 203)]
         public static void RunMatchAuditSmoke()
         {
             PSDMatchAuditConfig config = ScriptableObject.CreateInstance<PSDMatchAuditConfig>();

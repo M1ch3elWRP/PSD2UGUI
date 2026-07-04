@@ -9,7 +9,7 @@ namespace PSDImporter
         private UnityObject psdDataFile;
         private PSDImportConfig config;
 
-        [MenuItem("PSDTools/Create UI From PSD", priority = 0)]
+        [MenuItem("PSD2NGUI/Create UI From PSD", priority = 0)]
         public static void ShowWindow()
         {
             PSDEditorWindowUtility.ShowCenteredUtility<PsdCreateWindow>(

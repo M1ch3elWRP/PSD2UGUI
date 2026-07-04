@@ -14,7 +14,7 @@ namespace PSDImporter
         public string transformPath;  // 相对 Target Root 的路径，用于Prefab临时实例/引用失效恢复
     }
 
-    [CreateAssetMenu(fileName = "PSDBindingData", menuName = "PSDTools/Binding Data Asset")]
+    [CreateAssetMenu(fileName = "PSDBindingData", menuName = "PSD2NGUI/Binding Data Asset")]
     public class PSDBindingData : ScriptableObject
     {
         public List<LayerBinding> bindings = new List<LayerBinding>();

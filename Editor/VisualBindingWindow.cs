@@ -104,7 +104,7 @@ namespace PSDImporter
         private const float BOTTOM_H = 36f;     // 底部高度（三步工作流按钮）
         private const float SETTINGS_PANEL_H = 28f; // Config折叠面板高度
 
-        [MenuItem("PSDTools/Restore UI From PSD", priority = 1)]
+        [MenuItem("PSD2NGUI/Restore UI From PSD", priority = 1)]
         public static void ShowWindow()
         {
             PSDEditorWindowUtility.ShowCenteredUtility<VisualBindingWindow>(
