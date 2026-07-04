@@ -1,6 +1,5 @@
 using System;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace PSDImporter
 {
@@ -52,40 +51,40 @@ namespace PSDImporter
             string psdType = item.uiType;
             if (string.Equals(psdType, "Button", StringComparison.OrdinalIgnoreCase))
             {
-                if (node.GetComponent<Button>() != null) return 100f;
-                if (node.GetComponent<Toggle>() != null) return 80f;
-                if (node.GetComponent<Slider>() != null ||
-                    node.GetComponent<Scrollbar>() != null ||
-                    node.GetComponent<InputField>() != null ||
-                    node.GetComponent<Dropdown>() != null)
+                if (node.GetComponent<UIButton>() != null) return 100f;
+                if (node.GetComponent<UIToggle>() != null) return 80f;
+                if (node.GetComponent<UISlider>() != null ||
+                    node.GetComponent<UIScrollBar>() != null ||
+                    node.GetComponent<UIInput>() != null ||
+                    node.GetComponent<UIPopupList>() != null)
                 {
                     return 60f;
                 }
 
-                return node.GetComponent<Selectable>() != null ? 60f : 0f;
+                return node.GetComponent<UIWidget>() != null ? 60f : 0f;
             }
 
             if (string.Equals(psdType, "Text", StringComparison.OrdinalIgnoreCase))
             {
-                if (node.GetComponent<Text>() != null) return 100f;
-                return compatScore > 0f && node.GetComponent<Image>() != null && node.GetComponent<Selectable>() == null
+                if (node.GetComponent<UILabel>() != null) return 100f;
+                return compatScore > 0f && node.GetComponent<UISprite>() != null && node.GetComponent<UIWidget>() == null
                     ? compatScore
                     : 0f;
             }
 
             if (string.Equals(psdType, "RawImage", StringComparison.OrdinalIgnoreCase))
             {
-                return node.GetComponent<RawImage>() != null ? 100f : 0f;
+                return node.GetComponent<UITexture>() != null ? 100f : 0f;
             }
 
             if (string.Equals(psdType, "Image", StringComparison.OrdinalIgnoreCase))
             {
-                if (node.GetComponent<Image>() != null)
+                if (node.GetComponent<UISprite>() != null)
                 {
-                    return node.GetComponent<Selectable>() == null ? 100f : 60f;
+                    return node.GetComponent<UIWidget>() == null ? 100f : 60f;
                 }
 
-                return compatScore > 0f && node.GetComponent<Text>() != null ? compatScore : 0f;
+                return compatScore > 0f && node.GetComponent<UILabel>() != null ? compatScore : 0f;
             }
 
             if (string.Equals(psdType, "Layout", StringComparison.OrdinalIgnoreCase))
@@ -100,7 +99,9 @@ namespace PSDImporter
 
             if (string.Equals(psdType, "Item", StringComparison.OrdinalIgnoreCase))
             {
-                return node.GetComponent<LayoutGroup>() == null && node.GetComponentInParent<LayoutGroup>() != null ? 100f : 0f;
+                return node.GetComponent<UITable>() == null && node.GetComponent<UIGrid>() == null
+                    && (node.GetComponentInParent<UITable>() != null || node.GetComponentInParent<UIGrid>() != null)
+                    ? 100f : 0f;
             }
 
             return 0f;
@@ -127,22 +128,133 @@ namespace PSDImporter
 
             if (string.Equals(layoutType, "Horizontal", StringComparison.OrdinalIgnoreCase))
             {
-                return node.GetComponent<HorizontalLayoutGroup>() != null ? 100f : 0f;
+                return node.GetComponent<UITable>() != null ? 100f : 0f;
             }
 
             if (string.Equals(layoutType, "Vertical", StringComparison.OrdinalIgnoreCase))
             {
-                return node.GetComponent<VerticalLayoutGroup>() != null ? 100f : 0f;
+                return node.GetComponent<UITable>() != null ? 100f : 0f;
             }
 
             if (string.Equals(layoutType, "Grid", StringComparison.OrdinalIgnoreCase))
             {
-                return node.GetComponent<GridLayoutGroup>() != null ? 100f : 0f;
+                return node.GetComponent<UIGrid>() != null ? 100f : 0f;
             }
 
-            return node.GetComponent<LayoutGroup>() != null ? 100f : 0f;
+            return node.GetComponent<UITable>() != null || node.GetComponent<UIGrid>() != null ? 100f : 0f;
         }
     }
+
+    internal static class PSDTagUtility
+    {
+        internal static bool HasTag(string rawName, string tag)
+        {
+            if (string.IsNullOrEmpty(rawName) || string.IsNullOrEmpty(tag))
+            {
+                return false;
+            }
+
+            if (tag[0] != '@')
+            {
+                tag = "@" + tag;
+            }
+
+            int index = rawName.IndexOf('@');
+            while (index >= 0)
+            {
+                int end = index + 1;
+                while (end < rawName.Length && IsTagChar(rawName[end]))
+                {
+                    end++;
+                }
+
+                if (end > index + 1 &&
+                    string.Equals(rawName.Substring(index, end - index), tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                index = rawName.IndexOf('@', index + 1);
+            }
+
+            return false;
+        }
+
+        internal static bool HasAnyTag(string rawName, params string[] tags)
+        {
+            if (tags == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < tags.Length; i++)
+            {
+                if (HasTag(rawName, tags[i]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        internal static string RemoveTags(string rawName, params string[] tags)
+        {
+            if (string.IsNullOrEmpty(rawName) || tags == null)
+            {
+                return rawName;
+            }
+
+            string result = rawName;
+            for (int i = 0; i < tags.Length; i++)
+            {
+                string tag = tags[i];
+                if (string.IsNullOrEmpty(tag))
+                {
+                    continue;
+                }
+
+                if (tag[0] != '@')
+                {
+                    tag = "@" + tag;
+                }
+
+                result = RemoveTagToken(result, tag);
+            }
+
+            return result.Trim();
+        }
+
+        private static string RemoveTagToken(string rawName, string tag)
+        {
+            int index = rawName.IndexOf('@');
+            while (index >= 0)
+            {
+                int end = index + 1;
+                while (end < rawName.Length && IsTagChar(rawName[end]))
+                {
+                    end++;
+                }
+
+                if (end > index + 1 &&
+                    string.Equals(rawName.Substring(index, end - index), tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    return rawName.Remove(index, end - index);
+                }
+
+                index = rawName.IndexOf('@', index + 1);
+            }
+
+            return rawName;
+        }
+
+        private static bool IsTagChar(char c)
+        {
+            return char.IsLetterOrDigit(c) || c == '_';
+        }
+    }
+}
+
 
     internal static class PSDTagUtility
     {

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace PSDImporter
 {
@@ -103,7 +102,7 @@ namespace PSDImporter
                 return false;
             }
 
-            Text text = node.GetComponent<Text>();
+            UILabel text = node.GetComponent<UILabel>();
             if (text == null || !TryGetTextLocalVisualBounds(text, out Rect localBounds))
             {
                 return false;
@@ -159,20 +158,20 @@ namespace PSDImporter
             return true;
         }
 
-        public static bool TryGetTextLocalVisualBounds(Text text, out Rect bounds)
+        public static bool TryGetTextLocalVisualBounds(UILabel text, out Rect bounds)
         {
             bounds = default;
             if (text == null ||
                 !text.enabled ||
-                text.rectTransform == null ||
-                text.font == null ||
+                text.cachedTransform == null ||
+                text.trueTypeFont == null && text.bitmapFont == null ||
                 string.IsNullOrEmpty(text.text))
             {
                 return false;
             }
 
-            RectTransform rect = text.rectTransform;
-            Rect layoutRect = rect.rect;
+            Vector3 widgetSize = text.cachedTransform.localScale;
+            Rect layoutRect = new Rect(-widgetSize.x * 0.5f, -widgetSize.y * 0.5f, widgetSize.x, widgetSize.y);
             if (layoutRect.width <= 0.01f || layoutRect.height <= 0.01f)
             {
                 return false;
@@ -180,53 +179,18 @@ namespace PSDImporter
 
             try
             {
-                TextGenerationSettings settings = text.GetGenerationSettings(layoutRect.size);
-                TextGenerator generator = text.cachedTextGenerator;
-                if (generator == null || !generator.Populate(text.text, settings))
+                text.ProcessText();
+                Vector2 printed = text.printedSize;
+                if (printed.x <= 0.01f || printed.y <= 0.01f)
                 {
                     return false;
                 }
 
-                var verts = generator.verts;
-                int count = verts != null ? verts.Count : 0;
-                if (count > 4)
-                {
-                    count -= 4;
-                }
+                Vector3 offset = text.cachedTransform.localPosition;
+                Vector2 min = new Vector2(offset.x - printed.x * 0.5f, offset.y - printed.y * 0.5f);
+                Vector2 max = new Vector2(offset.x + printed.x * 0.5f, offset.y + printed.y * 0.5f);
 
-                if (count <= 0)
-                {
-                    return false;
-                }
-
-                float unitsPerPixel = 1f / Mathf.Max(0.01f, text.pixelsPerUnit);
-                Vector2 min = Vector2.zero;
-                Vector2 max = Vector2.zero;
-                bool hasBounds = false;
-                for (int i = 0; i < count; i++)
-                {
-                    Vector3 vertexPosition = verts[i].position * unitsPerPixel;
-                    if (float.IsNaN(vertexPosition.x) || float.IsNaN(vertexPosition.y) ||
-                        float.IsInfinity(vertexPosition.x) || float.IsInfinity(vertexPosition.y))
-                    {
-                        continue;
-                    }
-
-                    Vector2 point = new Vector2(vertexPosition.x, vertexPosition.y);
-                    if (!hasBounds)
-                    {
-                        min = point;
-                        max = point;
-                        hasBounds = true;
-                    }
-                    else
-                    {
-                        min = Vector2.Min(min, point);
-                        max = Vector2.Max(max, point);
-                    }
-                }
-
-                if (!hasBounds || max.x - min.x <= 0.01f || max.y - min.y <= 0.01f)
+                if (max.x - min.x <= 0.01f || max.y - min.y <= 0.01f)
                 {
                     return false;
                 }
@@ -314,8 +278,8 @@ namespace PSDImporter
                 return false;
             }
 
-            bool hasLayoutGroup = node.GetComponent<LayoutGroup>() != null;
-            bool hasGraphic = node.GetComponent<Graphic>() != null;
+            bool hasLayoutGroup = node.GetComponent<UITable>() != null || node.GetComponent<UIGrid>() != null;
+            bool hasGraphic = node.GetComponent<UIWidget>() != null;
             float ownArea = Mathf.Max(0.01f, ownSize.x * ownSize.y);
             float childArea = childSize.x * childSize.y;
             bool ownClearlySmaller =
@@ -334,13 +298,13 @@ namespace PSDImporter
                 return false;
             }
 
-            Graphic graphic = child.GetComponent<Graphic>();
+            UIWidget graphic = child.GetComponent<UIWidget>();
             if (graphic != null && graphic.enabled)
             {
                 return true;
             }
 
-            return child.GetComponent<Selectable>() != null || child.GetComponent<LayoutGroup>() != null;
+            return child.GetComponent<UIWidget>() != null || child.GetComponent<UITable>() != null || child.GetComponent<UIGrid>() != null;
         }
 
         public static Rect ToGuiRect(NodeGeom geom, Vector2 canvasOffset, float zoom)
@@ -359,18 +323,28 @@ namespace PSDImporter
                 return;
             }
 
-            Canvas.ForceUpdateCanvases();
+            // NGUI 不使用 Canvas；通知所有 UIPanel 重排并标记父级变更，让 UITable/UIGrid 立刻 Reposition
+            var panels = root.GetComponentsInChildren<UIPanel>(true);
+            for (int i = 0; i < panels.Length; i++)
+            {
+                if (panels[i] != null) panels[i].SetDirty();
+            }
+            NGUITools.MarkParentChanged();
+
             RectTransform[] rects = root.GetComponentsInChildren<RectTransform>(true);
             Array.Sort(rects, (a, b) => GetNodeDepth(b, root).CompareTo(GetNodeDepth(a, root)));
             for (int i = 0; i < rects.Length; i++)
             {
                 if (rects[i] != null)
                 {
-                    LayoutRebuilder.ForceRebuildLayoutImmediate(rects[i]);
+                    var table = rects[i].GetComponent<UITable>();
+                    if (table != null) table.repositionNow = true;
+
+                    var grid = rects[i].GetComponent<UIGrid>();
+                    if (grid != null) grid.repositionNow = true;
                 }
             }
-            LayoutRebuilder.ForceRebuildLayoutImmediate(root);
-            Canvas.ForceUpdateCanvases();
+            NGUITools.MarkParentChanged();
         }
 
         public static PsdGeom BuildPsdGeom(PicData item, int psdWidth, int psdHeight)

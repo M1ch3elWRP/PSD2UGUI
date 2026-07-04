@@ -1,6 +1,5 @@
 using System;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace PSDImporter
 {
@@ -77,7 +76,7 @@ namespace PSDImporter
             private static bool IsTextMatch(PicData item, RectTransform node)
             {
                 bool psdText = item.isText || string.Equals(item.uiType, "Text", StringComparison.OrdinalIgnoreCase);
-                bool unityText = node != null && node.GetComponent<Text>() != null;
+                bool unityText = node != null && node.GetComponent<UILabel>() != null;
                 return psdText || unityText;
             }
         }
