@@ -25,7 +25,6 @@ namespace UnityMCP
             UnityHttpServer.RegisterMethod("prefab/inspect", InspectPrefab, true, true);
             UnityHttpServer.RegisterMethod("prefab/instantiate", InstantiatePrefab, true, true);
             UnityHttpServer.RegisterMethod("prefab/saveFromScene", SavePrefabFromScene, true, true);
-            UnityHttpServer.RegisterMethod("prefab/validate", ValidatePrefab, true, true);
 
             UnityHttpServer.RegisterMethod("ugui/find", FindUguiObjects, true, true);
             UnityHttpServer.RegisterMethod("ugui/rectTransform", ManageRectTransform, true, true);
@@ -161,7 +160,6 @@ namespace UnityMCP
         {
             string rootPath = NormalizeAssetPath(GetString(request, "rootPath", "Assets"));
             bool recursive = GetBool(request, "recursive", true);
-            bool includeValidation = GetBool(request, "includeValidation", false);
             int limit = Mathf.Max(1, GetInt(request, "limit", 200));
             string nameContains = GetString(request, "nameContains", null);
 
@@ -192,14 +190,12 @@ namespace UnityMCP
                     continue;
                 }
 
-                object validation = includeValidation ? ValidatePrefabAsset(path, 20) : null;
                 entries.Add(new
                 {
                     path = path,
                     name = prefab.name,
                     guid = guid,
-                    folder = Path.GetDirectoryName(path).Replace("\\", "/"),
-                    validation = validation
+                    folder = Path.GetDirectoryName(path).Replace("\\", "/")
                 });
 
                 if (entries.Count >= limit)
@@ -221,7 +217,6 @@ namespace UnityMCP
         {
             string prefabPath = RequirePrefabPath(request);
             bool includeComponents = GetBool(request, "includeComponents", true);
-            bool includeValidation = GetBool(request, "includeValidation", true);
             int maxDepth = Mathf.Max(0, GetInt(request, "maxDepth", 6));
 
             GameObject root = PrefabUtility.LoadPrefabContents(prefabPath);
@@ -231,8 +226,7 @@ namespace UnityMCP
                 {
                     path = prefabPath,
                     guid = AssetDatabase.AssetPathToGUID(prefabPath),
-                    hierarchy = BuildGameObjectTree(root, 0, maxDepth, includeComponents),
-                    validation = includeValidation ? ValidateGameObjectRoot(root, prefabPath, 100) : null
+                    hierarchy = BuildGameObjectTree(root, 0, maxDepth, includeComponents)
                 };
             }
             finally
@@ -382,38 +376,6 @@ namespace UnityMCP
                 prefabPath = prefabPath,
                 guid = AssetDatabase.AssetPathToGUID(prefabPath),
                 replaced = exists
-            };
-        }
-
-        private static object ValidatePrefab(JObject request)
-        {
-            string prefabPath = NormalizeOptionalAssetPath(GetString(request, "prefabPath", null));
-            string rootPath = NormalizeAssetPath(GetString(request, "rootPath", "Assets"));
-            int maxIssues = Mathf.Max(1, GetInt(request, "maxIssues", 100));
-            int limit = Mathf.Max(1, GetInt(request, "limit", 100));
-
-            if (!string.IsNullOrEmpty(prefabPath))
-            {
-                return ValidatePrefabAsset(prefabPath, maxIssues);
-            }
-
-            if (!AssetDatabase.IsValidFolder(rootPath))
-            {
-                throw new DirectoryNotFoundException("Prefab root folder not found: " + rootPath);
-            }
-
-            List<object> results = new List<object>();
-            foreach (string guid in AssetDatabase.FindAssets("t:Prefab", new[] { rootPath }).Take(limit))
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                results.Add(ValidatePrefabAsset(path, maxIssues));
-            }
-
-            return new
-            {
-                rootPath = rootPath,
-                returned = results.Count,
-                results = results
             };
         }
 
@@ -700,118 +662,6 @@ namespace UnityMCP
                 rectTransform = rect != null ? BuildRectTransformInfo(rect) : null,
                 children = children
             };
-        }
-
-        private static object ValidatePrefabAsset(string prefabPath, int maxIssues)
-        {
-            string validPath = RequirePrefabPath(prefabPath);
-            GameObject root = PrefabUtility.LoadPrefabContents(validPath);
-            try
-            {
-                return ValidateGameObjectRoot(root, validPath, maxIssues);
-            }
-            finally
-            {
-                PrefabUtility.UnloadPrefabContents(root);
-            }
-        }
-
-        private static object ValidateGameObjectRoot(GameObject root, string targetPath, int maxIssues)
-        {
-            List<object> issues = new List<object>();
-            int gameObjectCount = 0;
-            int componentCount = 0;
-            int missingScriptCount = 0;
-            int missingReferenceCount = 0;
-
-            foreach (Transform transform in root.GetComponentsInChildren<Transform>(true))
-            {
-                GameObject go = transform.gameObject;
-                gameObjectCount++;
-                int missingOnGo = GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(go);
-                missingScriptCount += missingOnGo;
-                if (missingOnGo > 0 && issues.Count < maxIssues)
-                {
-                    issues.Add(new
-                    {
-                        type = "missing_script",
-                        path = GetHierarchyPath(go),
-                        count = missingOnGo
-                    });
-                }
-
-                foreach (Component component in go.GetComponents<Component>())
-                {
-                    if (component == null)
-                    {
-                        continue;
-                    }
-
-                    componentCount++;
-                    missingReferenceCount += CollectMissingReferences(component, go, issues, maxIssues);
-                }
-            }
-
-            return new
-            {
-                targetPath = targetPath,
-                ok = missingScriptCount == 0 && missingReferenceCount == 0,
-                gameObjectCount = gameObjectCount,
-                componentCount = componentCount,
-                missingScriptCount = missingScriptCount,
-                missingReferenceCount = missingReferenceCount,
-                returnedIssueCount = issues.Count,
-                issues = issues
-            };
-        }
-
-        private static int CollectMissingReferences(Component component, GameObject owner, List<object> issues, int maxIssues)
-        {
-            int count = 0;
-            try
-            {
-                SerializedObject serializedObject = new SerializedObject(component);
-                SerializedProperty property = serializedObject.GetIterator();
-                bool enterChildren = true;
-                while (property.NextVisible(enterChildren))
-                {
-                    enterChildren = false;
-                    if (property.propertyType != SerializedPropertyType.ObjectReference)
-                    {
-                        continue;
-                    }
-
-                    if (property.objectReferenceValue == null && property.objectReferenceInstanceIDValue != 0)
-                    {
-                        count++;
-                        if (issues.Count < maxIssues)
-                        {
-                            issues.Add(new
-                            {
-                                type = "missing_reference",
-                                path = GetHierarchyPath(owner),
-                                component = component.GetType().Name,
-                                property = property.propertyPath
-                            });
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                if (issues.Count < maxIssues)
-                {
-                    issues.Add(new
-                    {
-                        type = "validation_error",
-                        path = GetHierarchyPath(owner),
-                        component = component.GetType().Name,
-                        message = ex.Message
-                    });
-                }
-            }
-
-            return count;
         }
 
         private static GameObject FindSceneGameObject(string path)
