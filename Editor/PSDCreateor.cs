@@ -2,20 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI; // 引用UI命名空间
-using TZ.UI;         // 引用项目定制文本组件（UITextOutline, UITextGradient）
 
 namespace PSDImporter
 {
     public class PSDCreateor
     {
-        private static readonly BindingFlags StdButtonFieldFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-        private static readonly FieldInfo StdButtonLeftTextField = typeof(UIStdButton).GetField("m_LeftText", StdButtonFieldFlags);
-        private static readonly FieldInfo StdButtonLeftImgField = typeof(UIStdButton).GetField("m_LeftImg", StdButtonFieldFlags);
-
         public static event System.Action<GameObject, string> OnNodeCreated;
         public static event System.Action<GameObject, string> OnNodeSynced;
         public static event System.Action<GameObject, string> OnPicMissing;
@@ -36,7 +30,6 @@ namespace PSDImporter
             AssetDatabase.Refresh();
             PSDAssetDeduper.EnsureScope(psdData.psdAssetsFolder);
             PSDImageReuseLogStore.Reset();
-            PSDStdPrefabSupport.ResetCreateSessionState();
             var rootRectTrans = CreateCanvasRoot(new DirectoryInfo(psdData.psdAssetsFolder).Name);
 
             rootRectTrans.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, psdData.width);
@@ -169,21 +162,13 @@ namespace PSDImporter
                 string nodeName = !string.IsNullOrEmpty(node.name) ? node.name : node.rawLayerName;
                 if (string.IsNullOrEmpty(nodeName)) nodeName = $"node_{node.nodeId}";
                 assetByNodeId.TryGetValue(node.nodeId, out var assetItem);
-                bool isStdPrefabNode = assetItem.id != 0 && PSDStdPrefabSupport.IsStdPrefabRoot(assetItem);
-                GameObject nodeGo = isStdPrefabNode ? CreateNodeObject(assetItem, parent, config) : null;
-                if (nodeGo == null)
-                {
-                    nodeGo = CreateGo<RectTransform>(nodeName, parent, "UI").gameObject;
-                }
+                GameObject nodeGo = CreateGo<RectTransform>(nodeName, parent, "UI").gameObject;
 
                 var nodeRt = nodeGo.GetComponent<RectTransform>() ?? nodeGo.AddComponent<RectTransform>();
                 nodeRt.localScale = Vector3.one;
-                if (!isStdPrefabNode)
-                {
-                    nodeRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, node.width);
-                    nodeRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, node.height);
-                    nodeRt.anchoredPosition = PsdTopLeftToAnchored(node.x, node.y, node.width, node.height, psdData.width, psdData.height);
-                }
+                nodeRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, node.width);
+                nodeRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, node.height);
+                nodeRt.anchoredPosition = PsdTopLeftToAnchored(node.x, node.y, node.width, node.height, psdData.width, psdData.height);
 
                 if (assetItem.id != 0 && PSDScrollRectUtility.IsScrollRectRoot(assetItem))
                 {
@@ -297,34 +282,20 @@ namespace PSDImporter
             switch (item.uiType)
             {
                 case "Text":
-                    var enableFx = config != null && config.enableTextStrokeGradient;
-
-                    // 渐变效果：把 Text 替换为 UIText（UIText 继承自 Text）
-                    Text txt;
-                    if (enableFx && item.hasGradient)
-                    {
-                        RemoveConflictingUiComponents<Text>(go);
-                        var uiText = go.GetComponent<UIText>() ?? go.AddComponent<UIText>();
-                        txt = uiText;
-                    }
-                    else
-                    {
-                        txt = EnsureComponentWithOverride<Text>(go, config != null ? config.textComponent : null);
-                    }
-
+                    txt = EnsureComponentWithOverride<Text>(go, config != null ? config.textComponent : null);
                     SetupText(txt, item, config);
                     ApplyTextLayoutAndPosition(txt, item, psdData, updatePosition, controlledByLayout, previousSize, config);
 
-                    // 描边效果
-                    if (enableFx && item.hasStroke)
+                    // 描边：UGUI 原生 Outline
+                    if (item.hasStroke)
                     {
-                        SetupUITextOutline(go, item);
+                        SetupTextOutline(go, item);
                     }
 
-                    // 渐变效果（仅在已替换为 UIText 后生效）
-                    if (enableFx && item.hasGradient && txt is UIText uiTxt)
+                    // 渐变：UGUI 原生无渐变 effect，用 Shadow 兜底（取渐变底色作为投影色，垂直偏移）
+                    if (item.hasGradient)
                     {
-                        SetupUITextGradient(uiTxt, item);
+                        SetupTextGradientFallback(go, item);
                     }
                     break;
 
@@ -468,176 +439,6 @@ namespace PSDImporter
             }
         }
 
-        public static void RefreshStdPrefabRoot(GameObject go, PicData item, PSDData psdData, PSDImportConfig config = null)
-        {
-            if (go == null || psdData == null)
-            {
-                return;
-            }
-
-            RectTransform rt = go.GetComponent<RectTransform>();
-            if (rt == null)
-            {
-                rt = go.AddComponent<RectTransform>();
-            }
-
-            Undo.RecordObject(rt, "Sync Std Prefab Root");
-
-            if (PSDStdPrefabSupport.IsStdItem(item))
-            {
-                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, item.width);
-                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, item.height);
-            }
-
-            bool controlledByLayout = IsControlledByPsdLayoutParent(go.transform, item, psdData);
-            if (!controlledByLayout)
-            {
-                Transform canvasRoot = GetRootCanvasTransform(go.transform);
-                if (canvasRoot != null)
-                {
-                    ApplyPsdPositionPreserveCurrentRect(go.transform, canvasRoot, item, psdData);
-                }
-            }
-
-            ApplyStdPrefabContent(go, item, config);
-        }
-
-        private static void ApplyStdPrefabContent(GameObject go, PicData item, PSDImportConfig config)
-        {
-            if (!PSDStdPrefabSupport.IsStdPrefabRoot(item) ||
-                item.stdTextItems == null ||
-                item.stdTextItems.Count == 0)
-            {
-                return;
-            }
-
-            if (PSDStdPrefabSupport.IsStdButton(item))
-            {
-                ApplyStdButtonText(go, item.stdTextItems, config);
-            }
-        }
-
-        private static void ApplyStdButtonText(GameObject go, List<StdPrefabTextData> stdTextItems, PSDImportConfig config)
-        {
-            if (go == null || stdTextItems == null || stdTextItems.Count == 0)
-            {
-                return;
-            }
-
-            UIStdButton stdButton = go.GetComponent<UIStdButton>();
-            if (stdButton == null)
-            {
-                return;
-            }
-
-            List<StdPrefabTextData> texts = stdTextItems
-                .Where(t => !string.IsNullOrWhiteSpace(t.textContent))
-                .OrderBy(t => t.normalizedCenterX)
-                .ThenBy(t => t.normalizedCenterY)
-                .ToList();
-            if (texts.Count == 0)
-            {
-                return;
-            }
-
-            Text titleText = stdButton.title;
-            Text leftText = GetStdButtonLeftText(stdButton);
-            StdPrefabTextData titleData = MergeStdPrefabTexts(texts);
-            if (titleText != null)
-            {
-                Undo.RecordObject(titleText, "Sync Std Button Title");
-                SetupText(titleText, titleData, config);
-            }
-
-            if (leftText != null)
-            {
-                Undo.RecordObject(leftText, "Sync Std Button Left Text");
-                leftText.text = string.Empty;
-            }
-
-            ApplyStdButtonState(stdButton);
-        }
-
-        private static StdPrefabTextData MergeStdPrefabTexts(IEnumerable<StdPrefabTextData> items)
-        {
-            List<StdPrefabTextData> list = items?
-                .Where(t => !string.IsNullOrWhiteSpace(t.textContent))
-                .OrderBy(t => t.normalizedCenterX)
-                .ThenBy(t => t.normalizedCenterY)
-                .ToList() ?? new List<StdPrefabTextData>();
-
-            if (list.Count == 0)
-            {
-                return default;
-            }
-
-            StdPrefabTextData merged = list[list.Count - 1];
-            merged.textContent = string.Join(" ", list.Select(t => t.textContent.Trim()).Where(s => !string.IsNullOrEmpty(s)));
-            return merged;
-        }
-
-        private static Text GetStdButtonLeftText(UIStdButton stdButton)
-        {
-            return StdButtonLeftTextField?.GetValue(stdButton) as Text;
-        }
-
-        private static Component GetStdButtonLeftImage(UIStdButton stdButton)
-        {
-            return StdButtonLeftImgField?.GetValue(stdButton) as Component;
-        }
-
-        private static void ApplyStdButtonState(UIStdButton stdButton)
-        {
-            if (stdButton == null)
-            {
-                return;
-            }
-
-            Undo.RecordObject(stdButton, "Sync Std Button State");
-            stdButton.ButtonState = UIStdButton.StdButtonState.Text;
-        }
-
-        private static void HandleItemPool(GameObject go, PicData item)
-        {
-            // 尝试获取 UIItemPool 组件 (需要你的项目中引用了 TZ.Framework.UGUI)
-            var poolComp = go.GetComponent("UIItemPool");
-            // 如果不想用反射或者字符串，请在此处引用你的命名空间并使用:
-            // var poolComp = go.GetComponent<TZ.Framework.UGUI.UIItemPool>();
-
-            if (poolComp != null)
-            {
-                // 这里用反射来赋值，以免在这个脚本里产生对具体项目代码的强依赖
-                // 如果你确定引用了命名空间，可以直接写 poolComp.itemPrefab
-
-                // 1. 尝试找到 Item 模板
-                // 假设 UIItemPool 有个 itemPrefab 字段
-                var itemPrefabField = poolComp.GetType().GetField("itemPrefab");
-                Component itemPrefabLink = itemPrefabField?.GetValue(poolComp) as Component;
-
-                GameObject templateGo = null;
-                if (itemPrefabLink != null)
-                {
-                    templateGo = itemPrefabLink.gameObject;
-                }
-                else if (go.transform.childCount > 0)
-                {
-                    // 没赋值引用，找第一个子节点
-                    templateGo = go.transform.GetChild(0).gameObject;
-                }
-
-                // 2. 同步尺寸到模板
-                if (templateGo != null)
-                {
-                    RectTransform itemRT = templateGo.GetComponent<RectTransform>();
-                    if (itemRT != null)
-                    {
-                        Undo.RecordObject(itemRT, "Sync Item Size");
-                        itemRT.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, item.width);
-                        itemRT.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, item.height);
-                    }
-                }
-            }
-        }
 
         // =========================================================================
         // 内部辅助方法
@@ -684,17 +485,6 @@ namespace PSDImporter
 
         private static GameObject CreateNodeObject(PicData item, Transform parent, PSDImportConfig config)
         {
-            if (PSDStdPrefabSupport.IsStdPrefabRoot(item))
-            {
-                GameObject stdPrefabGo = PSDStdPrefabSupport.InstantiatePrefabForCreate(item, config, parent, out string assetPath);
-                if (stdPrefabGo != null)
-                {
-                    return stdPrefabGo;
-                }
-
-                Debug.LogWarning($"[PSD Create] Failed to instantiate std prefab for '{item.pngName}'. Fallback to empty node. asset={assetPath}");
-            }
-
             // Create base node; components are added in RefreshNode to honor overrides.
             return CreateGo<RectTransform>(item.cleanName, parent, "UI").gameObject;
         }
@@ -703,12 +493,6 @@ namespace PSDImporter
         {
             if (go == null)
             {
-                return;
-            }
-
-            if (PSDStdPrefabSupport.IsStdPrefabRoot(item))
-            {
-                RefreshStdPrefabRoot(go, item, psdData, config);
                 return;
             }
 
@@ -1245,7 +1029,6 @@ namespace PSDImporter
 
             string cleanName = NormalizeUnityName(item.cleanName);
             string pngName = NormalizeUnityName(item.pngName);
-            string strippedPngName = NormalizeUnityName(PSDStdPrefabSupport.StripStdPrefabTags(item.pngName));
 
             for (int i = 0; i < parent.childCount; i++)
             {
@@ -1256,9 +1039,7 @@ namespace PSDImporter
                 }
 
                 string childName = NormalizeUnityName(child.name);
-                if (NameEquals(childName, cleanName) ||
-                    NameEquals(childName, pngName) ||
-                    NameEquals(childName, strippedPngName))
+                if (NameEquals(childName, cleanName) || NameEquals(childName, pngName))
                 {
                     return child;
                 }
@@ -1481,28 +1262,9 @@ namespace PSDImporter
             return child.x >= left && child.x <= right && child.y >= bottom && child.y <= top;
         }
 
-        private static bool IsCommonTagged(PicData item)
-        {
-            if (string.IsNullOrEmpty(item.pngName)) return false;
-            return PSDTagUtility.HasAnyTag(item.pngName, "@CommonSprite", "@CommonSpriteWhite");
-        }
-
         // --- 组件 Setup 方法 ---
 
         public static void SetupText(UnityEngine.UI.Text txt, PicData item, PSDImportConfig config)
-        {
-            SetupTextInternal(
-                txt,
-                item.textContent,
-                item.fontSize,
-                item.fontColor,
-                item.textOpacity,
-                item.lineSpacing,
-                item.textAlign,
-                config);
-        }
-
-        public static void SetupText(UnityEngine.UI.Text txt, StdPrefabTextData item, PSDImportConfig config)
         {
             SetupTextInternal(
                 txt,
@@ -1578,95 +1340,30 @@ namespace PSDImporter
         }
 
         /// <summary>
-        /// 挂载 UITextOutline 描边效果。
-        /// 默认尝试 Material 模式（使用 Shader "TZRenderPipeline/UI/OutlineText"）；
-        /// Shader 找不到时降级到 OUTLINE8 顶点复制方案。
-        /// 描边宽度映射：strokeSize(px) → effectDistance(x=y统一值)
+        /// 挂载 UGUI 原生 Outline 描边效果。
+        /// 描边宽度映射：strokeSize(px) → effectDistance(x=y 统一值)
         /// </summary>
-        private static void SetupUITextOutline(GameObject go, PicData item)
+        private static void SetupTextOutline(GameObject go, PicData item)
         {
-            var outline = go.GetComponent<UITextOutline>() ?? go.AddComponent<UITextOutline>();
-            var outlineWidth = Mathf.Max(0.5f, item.strokeSize);
-            var distance = new Vector2(outlineWidth, outlineWidth);
-
+            var outline = go.GetComponent<Outline>() ?? go.AddComponent<Outline>();
+            float outlineWidth = Mathf.Max(0.5f, item.strokeSize);
             outline.effectColor = item.strokeColor;
-            outline.effectDistance = distance;
-
-            const string targetShader = "TZRenderPipeline/UI/OutlineText";
-            var shader = Shader.Find(targetShader);
-            if (shader != null)
-            {
-                outline.m_Type = UITextOutline.TextOutlineType.Material;
-            }
-            else
-            {
-                outline.m_Type = UITextOutline.TextOutlineType.OUTLINE8;
-                Debug.Log("[PSDImporter] UITextOutline: Shader '" + targetShader + "' not found. " +
-                    "Falling back to OUTLINE8 on '" + go.name + "'.");
-            }
-
-            // UITextOutline refreshes its material binding in OnEnable/OnDisable.
-            outline.enabled = false;
-            outline.enabled = true;
-        }
-
-        private static void SetupUITextOutline(GameObject go, StdPrefabTextData item)
-        {
-            var outline = go.GetComponent<UITextOutline>() ?? go.AddComponent<UITextOutline>();
-            var outlineWidth = Mathf.Max(0.5f, item.strokeSize);
-            var distance = new Vector2(outlineWidth, outlineWidth);
-
-            outline.effectColor = item.strokeColor;
-            outline.effectDistance = distance;
-
-            const string targetShader = "TZRenderPipeline/UI/OutlineText";
-            var shader = Shader.Find(targetShader);
-            if (shader != null)
-            {
-                outline.m_Type = UITextOutline.TextOutlineType.Material;
-            }
-            else
-            {
-                outline.m_Type = UITextOutline.TextOutlineType.OUTLINE8;
-                Debug.Log("[PSDImporter] UITextOutline: Shader '" + targetShader + "' not found. " +
-                    "Falling back to OUTLINE8 on '" + go.name + "'.");
-            }
-
-            outline.enabled = false;
-            outline.enabled = true;
+            outline.effectDistance = new Vector2(outlineWidth, outlineWidth);
+            outline.useGraphicAlpha = true;
         }
 
         /// <summary>
-        /// 挂载 UITextGradient 渐变效果。
-        /// 使用 UnityEngine.Gradient，只取首尾两个 color stop 做简单上下/左右渐变。
+        /// 渐变兜底：UGUI 原生无渐变 effect，用 Shadow 取渐变底色做投影，垂直偏移。
+        /// 仅保留视觉层次感，不还原真实渐变方向。
         /// </summary>
-        private static void SetupUITextGradient(UIText uiTxt, PicData item)
+        private static void SetupTextGradientFallback(GameObject go, PicData item)
         {
-            var grad = uiTxt.GetComponent<UITextGradient>() ?? uiTxt.gameObject.AddComponent<UITextGradient>();
-
-            var gradient = new UnityEngine.Gradient();
-            gradient.SetKeys(
-                new GradientColorKey[]
-                {
-                    new GradientColorKey(item.gradientBottomColor, 0f), // bottom
-                    new GradientColorKey(item.gradientTopColor, 1f)    // top
-                },
-                new GradientAlphaKey[]
-                {
-                    new GradientAlphaKey(1f, 0f),
-                    new GradientAlphaKey(1f, 1f)
-                });
-
-            grad.gradientColor = gradient;
-            grad.isVertical = item.gradientVertical;
-            grad.isMultiplyTextColor = false;
-            grad.isSingleWord = false;
-
-            // UITextGradient is a mesh effect; force a refresh after mutating its public fields.
-            grad.enabled = false;
-            grad.enabled = true;
-            uiTxt.SetVerticesDirty();
+            var shadow = go.GetComponent<Shadow>() ?? go.AddComponent<Shadow>();
+            shadow.effectColor = new Color(item.gradientBottomColor.r, item.gradientBottomColor.g, item.gradientBottomColor.b, 0.6f);
+            shadow.effectDistance = new Vector2(0f, Mathf.Max(1f, item.fontSize * 0.1f));
+            shadow.useGraphicAlpha = true;
         }
+
 
         // --- 文件名回退查找缓存（同一次 Create/Sync 调用内复用，避免重复扫描） ---
         private static Dictionary<string, string> _filenamePathCache;
@@ -1729,18 +1426,6 @@ namespace PSDImporter
         {
             string pngpath = PSDImageReuseLogStore.BuildPngPath(item, assetFolder);
             bool skipAutoSlice = PSDTagUtility.HasTag(item.pngName, "@Bg");
-
-            if (PSDCommonSpriteMatcher.TryResolveCommonSprite(pngpath, item, config, out var commonResult) &&
-                commonResult != null &&
-                commonResult.sprite != null)
-            {
-                img.sprite = commonResult.sprite;
-                img.type = commonResult.hasSlice ? Image.Type.Sliced : Image.Type.Simple;
-                img.color = commonResult.hasTint ? commonResult.tintColor : Color.white;
-                PSDCommonSpriteMatcher.MoveMatchedExport(pngpath, assetFolder, config);
-                PSDImageReuseLogStore.Record(item, commonResult);
-                return true;
-            }
 
             string resolvedPath = PSDAssetDeduper.GetCanonicalPath(
                 pngpath,
@@ -1830,21 +1515,6 @@ namespace PSDImporter
             }
 
             string pngpath = PSDImageReuseLogStore.BuildPngPath(item, assetFolder);
-
-            if (config != null && config.commonSpriteMatch && IsCommonTagged(item))
-            {
-                if (PSDCommonSpriteMatcher.TryResolveCommonSprite(pngpath, item, config, out var commonResult) &&
-                    commonResult != null &&
-                    commonResult.sprite != null)
-                {
-                    img.sprite = commonResult.sprite;
-                    img.type = commonResult.hasSlice ? Image.Type.Sliced : Image.Type.Simple;
-                    img.color = commonResult.hasTint ? commonResult.tintColor : Color.white;
-                    PSDCommonSpriteMatcher.MoveMatchedExport(pngpath, assetFolder, config);
-                    PSDImageReuseLogStore.Record(item, commonResult);
-                    return;
-                }
-            }
 
             string resolvedPath = PSDAssetDeduper.GetCanonicalPath(
                 pngpath,

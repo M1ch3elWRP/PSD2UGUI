@@ -4,7 +4,6 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
-using TZ.UI;
 
 namespace PSDImporter
 {
@@ -19,9 +18,7 @@ namespace PSDImporter
 
         internal static bool IsScrollRectNode(Transform node)
         {
-            return node != null &&
-                   (node.GetComponent<ScrollRect>() != null ||
-                    node.GetComponent<VirtualScrollRect>() != null);
+            return node != null && node.GetComponent<ScrollRect>() != null;
         }
 
         internal static bool IsScrollContentAlias(PicData item)
@@ -89,8 +86,7 @@ namespace PSDImporter
             bool vertical = !horizontal;
 
             ScrollRect scrollRect = rootGo.GetComponent<ScrollRect>();
-            VirtualScrollRect virtualScroll = rootGo.GetComponent<VirtualScrollRect>();
-            bool createdScrollRect = scrollRect == null && virtualScroll == null;
+            bool createdScrollRect = scrollRect == null;
 
             if (createdScrollRect)
             {
@@ -102,13 +98,13 @@ namespace PSDImporter
                 scrollRect.decelerationRate = 0.135f;
                 scrollRect.scrollSensitivity = 1f;
             }
-            else if (scrollRect != null && virtualScroll == null)
+            else
             {
                 scrollRect.horizontal = horizontal;
                 scrollRect.vertical = vertical;
             }
 
-            RectTransform viewport = ResolveViewport(rootRt, scrollRect, virtualScroll);
+            RectTransform viewport = ResolveViewport(rootRt, scrollRect);
             if (viewport == null && createdScrollRect)
             {
                 viewport = CreateChildRect("Viewport", rootRt);
@@ -122,7 +118,7 @@ namespace PSDImporter
                 }
             }
 
-            RectTransform content = ResolveContent(rootRt, scrollRect, virtualScroll);
+            RectTransform content = ResolveContent(rootRt, scrollRect);
             if (content == null && createdScrollRect)
             {
                 content = CreateChildRect("Content", viewport != null ? viewport : rootRt);
@@ -135,17 +131,8 @@ namespace PSDImporter
 
             ConfigureContentRect(content, layoutType);
 
-            if (scrollRect != null)
-            {
-                scrollRect.viewport = viewport;
-                scrollRect.content = content;
-            }
-
-            if (virtualScroll != null)
-            {
-                virtualScroll.viewport = viewport;
-                virtualScroll.content = content;
-            }
+            scrollRect.viewport = viewport;
+            scrollRect.content = content;
 
             ApplyContentLayout(content, scrollItem, psdData, config, layoutType);
             return content;
@@ -164,7 +151,7 @@ namespace PSDImporter
                 return null;
             }
 
-            return ResolveContent(rootRt, scrollRoot.GetComponent<ScrollRect>(), scrollRoot.GetComponent<VirtualScrollRect>());
+            return ResolveContent(rootRt, scrollRoot.GetComponent<ScrollRect>());
         }
 
         internal static void RegisterHierarchyNode(PicData item, Transform node, PSDData psdData, Dictionary<int, Transform> psdIdToNode)
@@ -333,34 +320,24 @@ namespace PSDImporter
             return children;
         }
 
-        private static RectTransform ResolveViewport(RectTransform root, ScrollRect scrollRect, VirtualScrollRect virtualScroll)
+        private static RectTransform ResolveViewport(RectTransform root, ScrollRect scrollRect)
         {
             if (scrollRect != null && scrollRect.viewport != null)
             {
                 return scrollRect.viewport;
             }
 
-            if (virtualScroll != null && virtualScroll.viewport != null)
-            {
-                return virtualScroll.viewport;
-            }
-
             return FindChildRect(root, "Viewport", recursive: false) ?? FindChildRect(root, "Viewport", recursive: true);
         }
 
-        private static RectTransform ResolveContent(RectTransform root, ScrollRect scrollRect, VirtualScrollRect virtualScroll)
+        private static RectTransform ResolveContent(RectTransform root, ScrollRect scrollRect)
         {
             if (scrollRect != null && scrollRect.content != null)
             {
                 return scrollRect.content;
             }
 
-            if (virtualScroll != null && virtualScroll.content != null)
-            {
-                return virtualScroll.content;
-            }
-
-            RectTransform viewport = ResolveViewport(root, scrollRect, virtualScroll);
+            RectTransform viewport = ResolveViewport(root, scrollRect);
             if (viewport != null)
             {
                 RectTransform contentUnderViewport = FindChildRect(viewport, "Content", recursive: false) ?? FindChildRect(viewport, "Content", recursive: true);

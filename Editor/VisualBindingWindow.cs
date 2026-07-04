@@ -22,8 +22,6 @@ namespace PSDImporter
         public bool isAutoCreated;
         /// <summary>Phase 3.5 PreLock 预锁定匹配（匈牙利之前的高置信度锁定）</summary>
         public bool isPreLocked;
-        public StdPrefabApplyMode stdPrefabMode;
-        public string stdPrefabAssetPath;
         public float bestCandidateScore;
         public float secondBestCandidateScore;
         public float scoreMargin;
@@ -34,25 +32,8 @@ namespace PSDImporter
         public bool idHistoryRejected;
         public string idHistoryRejectedPath;
         public string idHistoryRejectReason;
-        public string stdPrefabFailureReason;
-        public List<StdPrefabCandidateViewModel> stdPrefabCandidates = new List<StdPrefabCandidateViewModel>();
     }
 
-    [Serializable]
-    public class StdPrefabCandidateViewModel
-    {
-        public string nodePath;
-        public string assetPath;
-        public string source;
-        public float score;
-        public float secondBestScore;
-        public float scoreGap;
-        public float distance;
-        public float diffW;
-        public float diffH;
-        public bool accepted;
-        public string rejectReason;
-    }
 
     public class PrefabNodeViewModel
     {
@@ -565,7 +546,6 @@ namespace PSDImporter
                 if (bind == selectedBinding) EditorGUI.DrawRect(rowRect, new Color(0.2f, 0.5f, 0.8f, 0.5f));
                 else if (bind.isPreLocked) EditorGUI.DrawRect(rowRect, new Color(0.15f, 0.4f, 0.7f, 0.3f));  // PreLock → 浅蓝色底
                 else if (bind.isAutoCreated) EditorGUI.DrawRect(rowRect, new Color(0.1f, 0.55f, 0.1f, 0.35f));  // 自动创建 → 绿色底
-                else if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending) EditorGUI.DrawRect(rowRect, new Color(0.45f, 0.35f, 0.1f, 0.35f));
                 else if (i % 2 == 0) EditorGUI.DrawRect(rowRect, new Color(0, 0, 0, 0.1f));
 
                 if (Event.current.type == EventType.MouseDown && rowRect.Contains(Event.current.mousePosition))
@@ -593,16 +573,9 @@ namespace PSDImporter
                 if (bind.isIdMatched) GUILayout.Label(EditorGUIUtility.IconContent("LockIcon"), GUILayout.Width(14), GUILayout.Height(14));
                 else if (bind.isPreLocked) GUILayout.Label(EditorGUIUtility.IconContent("d_Linked"), GUILayout.Width(14), GUILayout.Height(14));
                 else if (bind.isAutoCreated) GUILayout.Label("★", EditorStyles.miniLabel, GUILayout.Width(14), GUILayout.Height(14));
-                else if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending) GUILayout.Label("+", EditorStyles.miniLabel, GUILayout.Width(14), GUILayout.Height(14));
                 GUILayout.Label(bind.psdItem.pngName, EditorStyles.boldLabel, GUILayout.Height(18));
                 EditorGUILayout.EndHorizontal();
 
-                if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending && bind.unityNode == null)
-                {
-                    string prefabName = string.IsNullOrEmpty(bind.stdPrefabAssetPath) ? "Standard prefab" : Path.GetFileNameWithoutExtension(bind.stdPrefabAssetPath);
-                    GUILayout.Label($"+ {prefabName}", EditorStyles.miniLabel, GUILayout.Height(16));
-                }
-                else
                 {
                     Transform old = bind.unityNode;
                     bind.unityNode = (Transform)EditorGUILayout.ObjectField(bind.unityNode, typeof(Transform), true, GUILayout.Height(16));
@@ -677,12 +650,6 @@ namespace PSDImporter
                     GUILayout.Label("Auto", EditorStyles.miniLabel);
                     GUI.color = Color.white;
                 }
-                else if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending)
-                {
-                    GUI.color = new Color(1f, 0.75f, 0.25f);
-                    GUILayout.Label("Std+", EditorStyles.miniLabel);
-                    GUI.color = Color.white;
-                }
                 else if (bind.unityNode != null)
                 {
                     GUI.color = new Color(0.8f, 0.8f, 0.8f);
@@ -704,10 +671,6 @@ namespace PSDImporter
                         GUI.color = Color.white;
                     }
                     else if (GUILayout.Button("?", EditorStyles.miniButton)) bind.isConfirmed = true;
-                }
-                else if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending)
-                {
-                    GUILayout.Label("+", EditorStyles.boldLabel);
                 }
                 EditorGUILayout.EndVertical();
                 EditorGUILayout.EndHorizontal();
@@ -903,7 +866,7 @@ namespace PSDImporter
             GUI.color = Color.white;
 
             // --- ③ 应用绑定 ---
-            bool hasMatched = hasData && bindings.Any(b => b.unityNode != null || b.stdPrefabMode == StdPrefabApplyMode.InstantiatePending);
+            bool hasMatched = hasData && bindings.Any(b => b.unityNode != null);
             GUI.backgroundColor = new Color(0.4f, 0.9f, 0.4f);
             GUI.enabled = hasMatched;
             if (GUILayout.Button("③ 应用绑定", GUILayout.Height(26), GUILayout.Width(100)))
@@ -924,9 +887,8 @@ namespace PSDImporter
 
             // 右侧状态提示
             int matched = bindings.Count(b => b.unityNode != null);
-            int pendingStd = bindings.Count(b => b.stdPrefabMode == StdPrefabApplyMode.InstantiatePending);
             int confirmed = bindings.Count(b => b.isConfirmed);
-            string status = cachedPsdData == null ? "未加载" : $"{matched}/{bindings.Count} 已匹配 | {pendingStd} 待创建 | {confirmed} 已确认";
+            string status = cachedPsdData == null ? "未加载" : $"{matched}/{bindings.Count} 已匹配 | {confirmed} 已确认";
             GUILayout.Label(status, EditorStyles.miniLabel, GUILayout.Height(26));
 
             GUILayout.Space(6);
@@ -957,7 +919,7 @@ namespace PSDImporter
                 {
                     if (item.excludeFromRestore) continue;
                     LoadTextureToCache(item);
-                    bindings.Add(new BindingPairViewModel() { psdItem = item, unityNode = null, score = 0, isConfirmed = false, statusInfo = "等待匹配", isIdMatched = false, isPreLocked = false, stdPrefabMode = StdPrefabApplyMode.None, stdPrefabAssetPath = null, depth = 0, bestCandidateScore = 0f, secondBestCandidateScore = 0f, scoreMargin = 0f, isLowConfidence = false, skippedTypeCandidates = 0, skippedSpatialCandidates = 0, hierarchyPenalizedCandidates = 0 });
+                    bindings.Add(new BindingPairViewModel() { psdItem = item, unityNode = null, score = 0, isConfirmed = false, statusInfo = "等待匹配", isIdMatched = false, isPreLocked = false, depth = 0, bestCandidateScore = 0f, secondBestCandidateScore = 0f, scoreMargin = 0f, isLowConfidence = false, skippedTypeCandidates = 0, skippedSpatialCandidates = 0, hierarchyPenalizedCandidates = 0 });
                 }
             }
             RefreshPrefabHierarchy();

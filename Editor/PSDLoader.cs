@@ -57,36 +57,9 @@ namespace PSDImporter
         // 父子关系（用于 Restore 匹配时的父级亲和力评分）
         public bool hasParent;
         public int parentNodeId;
-        public string stdPrefabKind;
-        public string stdPrefabVariant;
-        public bool isStdPrefabRoot;
         public bool excludeFromRestore;
-        public int stdPrefabRootId;
-        public List<StdPrefabTextData> stdTextItems;
         public bool isScrollContentAlias;
         public int scrollRectRootId;
-    }
-
-    [Serializable]
-    public struct StdPrefabTextData
-    {
-        public int sourceNodeId;
-        public string name;
-        public string textContent;
-        public float fontSize;
-        public Color fontColor;
-        public float textOpacity;
-        public float lineSpacing;
-        public string textAlign;
-        public bool hasStroke;
-        public Color strokeColor;
-        public float strokeSize;
-        public float width;
-        public float height;
-        public float localCenterX;
-        public float localCenterY;
-        public float normalizedCenterX;
-        public float normalizedCenterY;
     }
 
     [Serializable]
@@ -228,7 +201,6 @@ namespace PSDImporter
             // 排序 (Index倒序 -> 渲染顺序正序)
             psdData.listPngData.Sort((a, b) => a.index.CompareTo(b.index));
             PostProcessScrollRectFlags(psdData);
-            PostProcessStdPrefabFlags(psdData);
             return psdData;
         }
 
@@ -312,12 +284,7 @@ namespace PSDImporter
             // 解析父子关系
             data.parentNodeId = (int?)jodata["parentNodeId"] ?? 0;
             data.hasParent = data.parentNodeId > 0;
-            data.stdPrefabKind = string.Empty;
-            data.stdPrefabVariant = string.Empty;
-            data.isStdPrefabRoot = false;
             data.excludeFromRestore = false;
-            data.stdPrefabRootId = 0;
-            data.stdTextItems = ParseStdPrefabTextItems(jodata["stdTextItems"]);
             data.isScrollContentAlias = false;
             data.scrollRectRootId = 0;
 
@@ -348,10 +315,6 @@ namespace PSDImporter
 
             // --- 核心修改：读取新的 uiType 字段 ---
             string jsonUiType = (string)jodata["uiType"]; // 读取 JSX 写入的类型
-
-            // 默认值初始化
-            string jsonStdPrefabKind = (string)jodata["stdPrefabKind"];
-            string jsonStdPrefabVariant = (string)jodata["stdPrefabVariant"];
 
             data.uiType = "Image";
             data.layoutType = "None";
@@ -428,14 +391,6 @@ namespace PSDImporter
             // 后缀解析与清洗
             string rawName = data.pngName;
             data.cleanName = rawName;
-            data.stdPrefabKind = !string.IsNullOrEmpty(jsonStdPrefabKind)
-                ? jsonStdPrefabKind
-                : PSDStdPrefabSupport.DetectStdPrefabKind(rawName);
-            data.stdPrefabVariant = !string.IsNullOrEmpty(jsonStdPrefabVariant)
-                ? jsonStdPrefabVariant
-                : PSDStdPrefabSupport.DetectStdPrefabVariant(rawName);
-            data.isStdPrefabRoot = !string.IsNullOrEmpty(data.stdPrefabKind);
-            data.stdPrefabRootId = data.isStdPrefabRoot ? data.id : 0;
 
             // JSX 预计算的容器坐标默认是左上原点；若标记为 bottom-left 则无需翻转
             bool hasPrecalcFlag = jodata["precalc"] != null && (bool)jodata["precalc"];
@@ -450,14 +405,12 @@ namespace PSDImporter
                                         jsonUiType == "Vertical" ||
                                         jsonUiType == "Grid" ||
                                         jsonUiType == "ScrollRect" ||
-                                        jsonUiType == "Item" ||
-                                        !string.IsNullOrEmpty(jsonStdPrefabKind);
+                                        jsonUiType == "Item";
                 }
                 else
                 {
                     usesPrecalcBounds =
-                        PSDTagUtility.HasAnyTag(rawName, "@ScrollRect", "@H", "@HLayout", "@V", "@VLayout", "@G", "@Grid", "@Item", "@ItemBox", "@ItemCircle", "@PopUp") ||
-                        !string.IsNullOrEmpty(PSDStdPrefabSupport.DetectStdPrefabKind(rawName));
+                        PSDTagUtility.HasAnyTag(rawName, "@ScrollRect", "@H", "@HLayout", "@V", "@VLayout", "@G", "@Grid", "@Item");
                 }
             }
 
@@ -495,25 +448,10 @@ namespace PSDImporter
                 data.cleanName = PSDTagUtility.RemoveTags(rawName, "@Grid", "@G");
             }
 
-            if (PSDTagUtility.HasTag(rawName, "@StdBtn"))
-            {
-                data.uiType = "Button";
-                data.cleanName = PSDStdPrefabSupport.StripStdPrefabTags(rawName);
-            }
-            else if (PSDTagUtility.HasTag(rawName, "@ScrollRect"))
+            if (PSDTagUtility.HasTag(rawName, "@ScrollRect"))
             {
                 data.uiType = "ScrollRect";
                 data.cleanName = PSDTagUtility.RemoveTags(rawName, "@ScrollRect", "@HLayout", "@H", "@VLayout", "@V", "@Grid", "@G");
-            }
-            else if (PSDTagUtility.HasTag(rawName, "@PopUp"))
-            {
-                data.uiType = "Panel";
-                data.cleanName = PSDStdPrefabSupport.StripStdPrefabTags(rawName);
-            }
-            else if (PSDTagUtility.HasAnyTag(rawName, "@ItemBox", "@ItemCircle"))
-            {
-                data.uiType = "Item";
-                data.cleanName = PSDStdPrefabSupport.StripStdPrefabTags(rawName);
             }
             else if (PSDTagUtility.HasTag(rawName, "@Btn"))
             {
@@ -528,12 +466,12 @@ namespace PSDImporter
             else if (PSDTagUtility.HasTag(rawName, "@ImgNoTrim"))
             {
                 data.uiType = "Image";
-                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@ImgNoTrim", "@CommonSprite", "@CommonSpriteWhite", "@Bg");
+                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@ImgNoTrim", "@Bg");
             }
-            else if (PSDTagUtility.HasAnyTag(rawName, "@Img", "@Image", "@CommonSprite", "@CommonSpriteWhite"))
+            else if (PSDTagUtility.HasAnyTag(rawName, "@Img", "@Image"))
             {
                 data.uiType = "Image";
-                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@Img", "@Image", "@CommonSprite", "@CommonSpriteWhite", "@Bg");
+                data.cleanName = PSDTagUtility.RemoveTags(rawName, "@Img", "@Image", "@Bg");
             }
 
             return data;
@@ -553,13 +491,11 @@ namespace PSDImporter
             }
 
             string assetUiType = (string)asset["uiType"] ?? "Normal";
-            string assetStdPrefabKind = (string)asset["stdPrefabKind"];
             bool inferredPrecalc = assetUiType == "Horizontal" ||
                                    assetUiType == "Vertical" ||
                                    assetUiType == "Grid" ||
                                    assetUiType == "ScrollRect" ||
-                                   assetUiType == "Item" ||
-                                   !string.IsNullOrEmpty(assetStdPrefabKind);
+                                   assetUiType == "Item";
 
             var converted = new JObject
             {
@@ -576,9 +512,6 @@ namespace PSDImporter
                 ["width"] = (float?)asset["trimBounds"]?["width"] ?? (float?)asset["absBounds"]?["width"] ?? 0f,
                 ["height"] = (float?)asset["trimBounds"]?["height"] ?? (float?)asset["absBounds"]?["height"] ?? 0f,
                 ["uiType"] = asset["uiType"] ?? "Normal",
-                ["stdPrefabKind"] = asset["stdPrefabKind"],
-                ["stdPrefabVariant"] = asset["stdPrefabVariant"],
-                ["stdTextItems"] = asset["stdTextItems"],
                 // v2 fix: read isText from JSX asset record instead of hardcoding false
                 ["isText"] = (bool?)asset["isText"] ?? false
             };
@@ -622,56 +555,6 @@ namespace PSDImporter
             return ParsePicData(groupName, converted, canvasHeight);
         }
 
-        private static List<StdPrefabTextData> ParseStdPrefabTextItems(JToken token)
-        {
-            List<StdPrefabTextData> items = new List<StdPrefabTextData>();
-            if (!(token is JArray array) || array.Count == 0)
-            {
-                return items;
-            }
-
-            for (int i = 0; i < array.Count; i++)
-            {
-                if (!(array[i] is JObject entry))
-                {
-                    continue;
-                }
-
-                StdPrefabTextData textItem = new StdPrefabTextData
-                {
-                    sourceNodeId = (int?)entry["sourceNodeId"] ?? 0,
-                    name = (string)entry["name"] ?? string.Empty,
-                    textContent = (string)entry["textContent"] ?? (string)entry["content"] ?? string.Empty,
-                    fontSize = (float?)entry["fontSize"] ?? 0f,
-                    textOpacity = (float?)entry["opacity"] ?? 100f,
-                    lineSpacing = (float?)entry["lineSpacing"] ?? -1f,
-                    textAlign = (string)entry["textAlign"] ?? "center",
-                    hasStroke = (bool?)entry["hasStroke"] ?? false,
-                    strokeSize = (float?)entry["strokeSize"] ?? 0f,
-                    width = (float?)entry["width"] ?? 0f,
-                    height = (float?)entry["height"] ?? 0f,
-                    localCenterX = (float?)entry["localCenterX"] ?? 0f,
-                    localCenterY = (float?)entry["localCenterY"] ?? 0f,
-                    normalizedCenterX = (float?)entry["normalizedCenterX"] ?? 0.5f,
-                    normalizedCenterY = (float?)entry["normalizedCenterY"] ?? 0.5f
-                };
-
-                string hexColor = (string)entry["fontColor"];
-                if (!ColorUtility.TryParseHtmlString(hexColor, out textItem.fontColor))
-                {
-                    textItem.fontColor = Color.white;
-                }
-                string strokeHexColor = (string)entry["strokeColor"];
-                if (!ColorUtility.TryParseHtmlString(strokeHexColor, out textItem.strokeColor))
-                {
-                    textItem.strokeColor = Color.black;
-                }
-
-                items.Add(textItem);
-            }
-
-            return items;
-        }
 
         private static void PostProcessScrollRectFlags(PSDData psdData)
         {
@@ -750,275 +633,6 @@ namespace PSDImporter
             return !rootHasLayout && candidates.Count == 1 ? candidates[0] : -1;
         }
 
-        private static void PostProcessStdPrefabFlags(PSDData psdData)
-        {
-            if (psdData == null || psdData.listPngData == null || psdData.listPngData.Count == 0)
-            {
-                return;
-            }
-
-            HashSet<int> stdRootIds = new HashSet<int>();
-            for (int i = 0; i < psdData.listPngData.Count; i++)
-            {
-                PicData item = psdData.listPngData[i];
-                if (!item.isStdPrefabRoot || item.id == 0)
-                {
-                    continue;
-                }
-
-                item.stdPrefabRootId = item.id;
-                psdData.listPngData[i] = item;
-                stdRootIds.Add(item.id);
-            }
-
-            if (stdRootIds.Count == 0)
-            {
-                return;
-            }
-
-            AbsorbSiblingTextForEmptyStdButtons(psdData);
-
-            Dictionary<int, int> parentByNodeId = new Dictionary<int, int>();
-            for (int i = 0; i < psdData.listPngData.Count; i++)
-            {
-                PicData item = psdData.listPngData[i];
-                if (item.id != 0)
-                {
-                    parentByNodeId[item.id] = item.parentNodeId;
-                }
-            }
-            if (psdData.skeleton != null && psdData.skeleton.Count > 0)
-            {
-                for (int i = 0; i < psdData.skeleton.Count; i++)
-                {
-                    PsdSkeletonNode node = psdData.skeleton[i];
-                    parentByNodeId[node.nodeId] = node.parentNodeId;
-                }
-            }
-
-            for (int i = 0; i < psdData.listPngData.Count; i++)
-            {
-                PicData item = psdData.listPngData[i];
-                if (item.isStdPrefabRoot || item.id == 0)
-                {
-                    continue;
-                }
-
-                int stdRootId = FindStdPrefabAncestorId(item.parentNodeId, parentByNodeId, stdRootIds);
-                if (stdRootId == 0)
-                {
-                    continue;
-                }
-
-                item.excludeFromRestore = true;
-                item.stdPrefabRootId = stdRootId;
-                psdData.listPngData[i] = item;
-            }
-        }
-
-        private static void AbsorbSiblingTextForEmptyStdButtons(PSDData psdData)
-        {
-            if (psdData == null || psdData.listPngData == null || psdData.listPngData.Count == 0)
-            {
-                return;
-            }
-
-            HashSet<int> absorbedTextIds = new HashSet<int>();
-            for (int i = 0; i < psdData.listPngData.Count; i++)
-            {
-                PicData button = psdData.listPngData[i];
-                if (!PSDStdPrefabSupport.IsStdButton(button) ||
-                    button.stdTextItems != null && button.stdTextItems.Count > 0)
-                {
-                    continue;
-                }
-
-                List<StdPrefabTextData> absorbedTexts = new List<StdPrefabTextData>();
-                for (int j = 0; j < psdData.listPngData.Count; j++)
-                {
-                    PicData candidate = psdData.listPngData[j];
-                    if (!candidate.isText ||
-                        candidate.id == 0 ||
-                        candidate.id == button.id ||
-                        candidate.parentNodeId != button.parentNodeId ||
-                        absorbedTextIds.Contains(candidate.id))
-                    {
-                        continue;
-                    }
-
-                    if (!IsTextInsideStdButtonBounds(button, candidate))
-                    {
-                        continue;
-                    }
-
-                    absorbedTexts.Add(ConvertSiblingTextToStdText(button, candidate));
-                    absorbedTextIds.Add(candidate.id);
-
-                    candidate.excludeFromRestore = true;
-                    candidate.stdPrefabRootId = button.id;
-                    psdData.listPngData[j] = candidate;
-                }
-
-                if (absorbedTexts.Count == 0)
-                {
-                    continue;
-                }
-
-                absorbedTexts.Sort((a, b) => a.localCenterX.CompareTo(b.localCenterX));
-                button.stdTextItems = absorbedTexts;
-                psdData.listPngData[i] = button;
-            }
-        }
-
-        private static bool IsTextInsideStdButtonBounds(PicData button, PicData text)
-        {
-            float buttonLeft = button.x - button.width * 0.5f;
-            float buttonRight = button.x + button.width * 0.5f;
-            float buttonBottom = button.y - button.height * 0.5f;
-            float buttonTop = button.y + button.height * 0.5f;
-
-            if (text.x >= buttonLeft && text.x <= buttonRight &&
-                text.y >= buttonBottom && text.y <= buttonTop)
-            {
-                return true;
-            }
-
-            float textLeft = text.x - text.width * 0.5f;
-            float textRight = text.x + text.width * 0.5f;
-            float textBottom = text.y - text.height * 0.5f;
-            float textTop = text.y + text.height * 0.5f;
-
-            float overlapW = Mathf.Max(0f, Mathf.Min(buttonRight, textRight) - Mathf.Max(buttonLeft, textLeft));
-            float overlapH = Mathf.Max(0f, Mathf.Min(buttonTop, textTop) - Mathf.Max(buttonBottom, textBottom));
-            float textArea = Mathf.Max(1f, text.width * text.height);
-            return overlapW * overlapH / textArea >= 0.5f;
-        }
-
-        private static StdPrefabTextData ConvertSiblingTextToStdText(PicData rootItem, PicData textItem)
-        {
-            float rootLeft = rootItem.x - rootItem.width * 0.5f;
-            float rootTop = rootItem.y + rootItem.height * 0.5f;
-            float localCenterX = textItem.x - rootLeft;
-            float localCenterY = rootTop - textItem.y;
-
-            return new StdPrefabTextData
-            {
-                sourceNodeId = textItem.id,
-                name = !string.IsNullOrEmpty(textItem.cleanName) ? textItem.cleanName : textItem.pngName,
-                textContent = textItem.textContent,
-                fontSize = textItem.fontSize,
-                fontColor = textItem.fontColor,
-                textOpacity = textItem.textOpacity,
-                lineSpacing = textItem.lineSpacing,
-                textAlign = textItem.textAlign,
-                hasStroke = textItem.hasStroke,
-                strokeColor = textItem.strokeColor,
-                strokeSize = textItem.strokeSize,
-                width = textItem.width,
-                height = textItem.height,
-                localCenterX = localCenterX,
-                localCenterY = localCenterY,
-                normalizedCenterX = rootItem.width > 0.01f ? Mathf.Clamp01(localCenterX / rootItem.width) : 0.5f,
-                normalizedCenterY = rootItem.height > 0.01f ? Mathf.Clamp01(localCenterY / rootItem.height) : 0.5f
-            };
-        }
-
-        private static int FindStdPrefabAncestorId(
-            int parentNodeId,
-            Dictionary<int, int> parentByNodeId,
-            HashSet<int> stdRootIds)
-        {
-            int cursor = parentNodeId;
-            int guard = 0;
-            while (cursor > 0 && guard < 2048)
-            {
-                guard++;
-                if (stdRootIds.Contains(cursor))
-                {
-                    return cursor;
-                }
-
-                if (!parentByNodeId.TryGetValue(cursor, out cursor))
-                {
-                    break;
-                }
-            }
-
-            return 0;
-        }
-
-        private static void ParseSkeleton(PSDData psdData, JArray skeletonArray)
-        {
-            if (skeletonArray == null) return;
-
-            for (int i = 0; i < skeletonArray.Count; i++)
-            {
-                var jo = skeletonArray[i] as JObject;
-                if (jo == null) continue;
-                var n = new PsdSkeletonNode
-                {
-                    nodeId = (int?)jo["nodeId"] ?? 0,
-                    parentNodeId = (int?)jo["parentNodeId"] ?? 0,
-                    hasParent = jo["parentNodeId"] != null,
-                    name = (string)jo["name"] ?? string.Empty,
-                    rawLayerName = (string)jo["rawLayerName"] ?? string.Empty,
-                    sourcePath = (string)jo["sourcePath"] ?? string.Empty,
-                    depth = (int?)jo["depth"] ?? 0,
-                    siblingIndex = (int?)jo["siblingIndex"] ?? 0,
-                    isGroup = (bool?)jo["isGroup"] ?? false,
-                    isStructureOnly = (bool?)jo["isStructureOnly"] ?? false,
-                    uiTypeHint = (string)jo["uiTypeHint"] ?? "Normal",
-                    layoutHint = (string)jo["layoutHint"] ?? "None",
-                    exportAssetRef = (string)jo["exportAssetRef"] ?? string.Empty,
-                    x = (float?)jo["x"] ?? (float?)jo["absBounds"]?["x"] ?? 0f,
-                    y = (float?)jo["y"] ?? (float?)jo["absBounds"]?["y"] ?? 0f,
-                    width = (float?)jo["width"] ?? (float?)jo["absBounds"]?["width"] ?? 0f,
-                    height = (float?)jo["height"] ?? (float?)jo["absBounds"]?["height"] ?? 0f
-                };
-                psdData.skeleton.Add(n);
-            }
-        }
-
-        private static Dictionary<int, string> BuildGroupNameMapFromSkeleton(JArray skeletonArray)
-        {
-            var map = new Dictionary<int, string>();
-            if (skeletonArray == null) return map;
-
-            var parentByNode = new Dictionary<int, int?>();
-            var nameByNode = new Dictionary<int, string>();
-            for (int i = 0; i < skeletonArray.Count; i++)
-            {
-                var jo = skeletonArray[i] as JObject;
-                if (jo == null) continue;
-                int nodeId = (int?)jo["nodeId"] ?? 0;
-                if (nodeId == 0) continue;
-                parentByNode[nodeId] = (int?)jo["parentNodeId"];
-                nameByNode[nodeId] = (string)jo["name"] ?? (string)jo["rawLayerName"] ?? string.Empty;
-            }
-
-            foreach (var kv in parentByNode)
-            {
-                int nodeId = kv.Key;
-                var segs = new List<string>();
-                int? cursor = kv.Value;
-                int guard = 0;
-                while (cursor.HasValue && guard < 2048)
-                {
-                    guard++;
-                    if (!nameByNode.TryGetValue(cursor.Value, out string parentName)) break;
-                    // 与 JSX skinName 对齐：父节点名包含 @ 标记时截断（ExportToPNG.jsx L126）
-                    // @ 标记的组（@Btn、@Img 等）不会成为 PNG 导出的子目录
-                    if (parentName.IndexOf('@') >= 0) break;
-                    if (!string.IsNullOrEmpty(parentName)) segs.Add(parentName);
-                    if (!parentByNode.TryGetValue(cursor.Value, out int? nextParent)) break;
-                    cursor = nextParent;
-                }
-                segs.Reverse();
-                map[nodeId] = segs.Count > 0 ? string.Join("/", segs) + "/" : "root/";
-            }
-
-            return map;
-        }
 
         private static string GroupNameFromSourcePath(string sourcePath)
         {

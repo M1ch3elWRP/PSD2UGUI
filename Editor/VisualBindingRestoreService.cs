@@ -85,7 +85,6 @@ namespace PSDImporter
                 bool logDetail = matchConfig.showDetailedLog;
                 bool forceCandidateLog = matchConfig.forceCandidateLog;
                 bool logCandidatesInLoop = logDetail && !forceCandidateLog;
-                bool stdPrefabEnabled = PSDStdPrefabSupport.HasAnyStdPrefabMatchEnabled(matchConfig);
                 bool idHistoryEnabled = matchConfig.enableIdHistoryMatch;
 
                 float perfectThreshold = 150f;
@@ -102,29 +101,9 @@ namespace PSDImporter
                     ResetMatchDiagnostics(bind);
                     if (bind.isConfirmed && bind.unityNode != null)
                     {
-                        bool canKeepConfirmed = true;
-                        if (stdPrefabEnabled && PSDStdPrefabSupport.IsStdPrefabRoot(bind.psdItem))
-                        {
-                            canKeepConfirmed = PSDStdPrefabSupport.IsReservedStdPrefabNode(bind.unityNode as RectTransform, matchConfig);
-                            bind.stdPrefabMode = canKeepConfirmed ? StdPrefabApplyMode.ReuseExisting : StdPrefabApplyMode.None;
-                        }
-
-                        if (canKeepConfirmed)
-                        {
-                            SetFixedMatchConfidence(bind, bind.score > 0f ? bind.score : 9999f);
-                            occupiedNodes.Add(bind.unityNode);
-                            matchedBindings.Add(bind);
-                        }
-                        else
-                        {
-                            bind.unityNode = null;
-                            bind.score = 0;
-                            bind.isConfirmed = false;
-                            bind.statusInfo = "Waiting for match";
-                            bind.isIdMatched = false;
-                            ResetMatchDiagnostics(bind);
-                            bind.stdPrefabAssetPath = null;
-                        }
+                        SetFixedMatchConfidence(bind, bind.score > 0f ? bind.score : 9999f);
+                        occupiedNodes.Add(bind.unityNode);
+                        matchedBindings.Add(bind);
                     }
                     else
                     {
@@ -133,12 +112,9 @@ namespace PSDImporter
                         bind.statusInfo = "Waiting for match";
                         bind.isIdMatched = false;
                         ResetMatchDiagnostics(bind);
-                        bind.stdPrefabMode = StdPrefabApplyMode.None;
-                        bind.stdPrefabAssetPath = null;
                     }
                 }
 
-                List<BindingPairViewModel> stdPrefabBinds = new List<BindingPairViewModel>();
                 List<BindingPairViewModel> pendingBinds = new List<BindingPairViewModel>();
                 foreach (var bind in bindings)
                 {
@@ -153,11 +129,6 @@ namespace PSDImporter
                         bool canUseSavedGo = savedGo != null &&
                                              savedGo.transform.IsChildOf(rootTransform) &&
                                              !occupiedNodes.Contains(savedGo.transform);
-
-                        if (canUseSavedGo && stdPrefabEnabled && PSDStdPrefabSupport.IsStdPrefabRoot(bind.psdItem))
-                        {
-                            canUseSavedGo = PSDStdPrefabSupport.IsReservedStdPrefabNode(savedGo.transform as RectTransform, matchConfig);
-                        }
 
                         if (canUseSavedGo)
                         {
@@ -180,10 +151,6 @@ namespace PSDImporter
                                 bind.isIdMatched = true;
                                 bind.isConfirmed = true;
                                 SetFixedMatchConfidence(bind, bind.score);
-                                if (stdPrefabEnabled && PSDStdPrefabSupport.IsStdPrefabRoot(bind.psdItem))
-                                {
-                                    bind.stdPrefabMode = StdPrefabApplyMode.ReuseExisting;
-                                }
                                 matchedBindings.Add(bind);
                                 occupiedNodes.Add(savedGo.transform);
 
@@ -196,26 +163,7 @@ namespace PSDImporter
                         }
                     }
 
-                    if (stdPrefabEnabled && PSDStdPrefabSupport.IsStdPrefabRoot(bind.psdItem))
-                    {
-                        stdPrefabBinds.Add(bind);
-                        bind.statusInfo = "Waiting for standard prefab match";
-                        continue;
-                    }
-
                     pendingBinds.Add(bind);
-                }
-
-                if (stdPrefabEnabled && stdPrefabBinds.Count > 0)
-                {
-                    List<BindingPairViewModel> earlyStdPrefabBinds = stdPrefabBinds
-                        .Where(b => b != null && (PSDStdPrefabSupport.IsStdButton(b.psdItem) || PSDStdPrefabSupport.IsStdPopup(b.psdItem)))
-                        .ToList();
-                    if (earlyStdPrefabBinds.Count > 0)
-                    {
-                        ResolveStdPrefabBindings(earlyStdPrefabBinds, targetRoot, cachedPsdData, matchConfig, occupiedNodes, matchedBindings, logDetail);
-                        stdPrefabBinds.RemoveAll(b => b != null && (PSDStdPrefabSupport.IsStdButton(b.psdItem) || PSDStdPrefabSupport.IsStdPopup(b.psdItem)));
-                    }
                 }
 
                 var allNodes = targetRoot.GetComponentsInChildren<RectTransform>(true);
@@ -225,11 +173,9 @@ namespace PSDImporter
                 int skippedRoot = 0;
                 int skippedOccupied = 0;
                 int skippedInactive = 0;
-                int skippedStdPrefab = 0;
                 int skippedRootLog = 0;
                 int skippedInactiveLog = 0;
                 int skippedOccupiedLog = 0;
-                int skippedStdPrefabLog = 0;
 
                 foreach (var node in allNodes)
                 {
@@ -244,20 +190,6 @@ namespace PSDImporter
                     {
                         skippedInactive++;
                         skippedInactiveLog++;
-                        continue;
-                    }
-
-                    if (PSDStdPrefabSupport.IsInsideReservedStdPrefab(node, matchConfig))
-                    {
-                        skippedStdPrefab++;
-                        skippedStdPrefabLog++;
-                        continue;
-                    }
-
-                    if (IsInsideMatchedStdPrefab(node, matchedBindings))
-                    {
-                        skippedStdPrefab++;
-                        skippedStdPrefabLog++;
                         continue;
                     }
 
@@ -283,10 +215,10 @@ namespace PSDImporter
 
                 if (logDetail)
                 {
-                    Debug.Log($"[Match] Candidate nodes={nodeList.Count}, skipped(root:{skippedRoot}, occupied:{skippedOccupied}, inactive:{skippedInactive}, std:{skippedStdPrefab})");
+                    Debug.Log($"[Match] Candidate nodes={nodeList.Count}, skipped(root:{skippedRoot}, occupied:{skippedOccupied}, inactive:{skippedInactive})");
                     if (forceCandidateLog)
                     {
-                        Debug.Log($"[Match] Candidate nodes(for log)={nodeListForLog.Count}, skipped(root:{skippedRootLog}, occupied:{skippedOccupiedLog}, inactive:{skippedInactiveLog}, std:{skippedStdPrefabLog})");
+                        Debug.Log($"[Match] Candidate nodes(for log)={nodeListForLog.Count}, skipped(root:{skippedRootLog}, occupied:{skippedOccupiedLog}, inactive:{skippedInactiveLog})");
                     }
                 }
 
@@ -307,7 +239,6 @@ namespace PSDImporter
                     {
                         bind.statusInfo = "No suitable node found";
                     }
-                    ResolveStdPrefabBindings(stdPrefabBinds, targetRoot, cachedPsdData, matchConfig, occupiedNodes, matchedBindings, logDetail);
                     LogUnmatchedSummary(bindings);
                     if (logDetail)
                     {
@@ -520,7 +451,6 @@ namespace PSDImporter
                                 Debug.Log($"[Match] All {pendingBinds.Count} pairs resolved by pre-lock, skipping Hungarian.");
                             }
                             // Early exit — all bindings are already set
-                            ResolveStdPrefabBindings(stdPrefabBinds, targetRoot, cachedPsdData, matchConfig, occupiedNodes, matchedBindings, logDetail);
                             LogUnmatchedSummary(bindings);
                             if (logDetail)
                             {
@@ -581,7 +511,6 @@ namespace PSDImporter
                     {
                         bind.statusInfo = "No suitable node found";
                     }
-                    ResolveStdPrefabBindings(stdPrefabBinds, targetRoot, cachedPsdData, matchConfig, occupiedNodes, matchedBindings, logDetail);
                     LogUnmatchedSummary(bindings);
                     if (logDetail)
                     {
@@ -718,7 +647,6 @@ namespace PSDImporter
                     }
                 }
 
-                ResolveStdPrefabBindings(stdPrefabBinds, targetRoot, cachedPsdData, matchConfig, occupiedNodes, matchedBindings, logDetail);
                 LogUnmatchedSummary(bindings);
 
                 // Export detailed match log to JSON when showDetailedLog is enabled
@@ -769,48 +697,6 @@ namespace PSDImporter
             for (int i = 0; i < bindings.Count; i++)
             {
                 var bind = bindings[i];
-
-                bool treatAsStdReuse = bind.unityNode != null &&
-                                       (bind.stdPrefabMode == StdPrefabApplyMode.ReuseExisting ||
-                                        (bind.stdPrefabMode == StdPrefabApplyMode.None &&
-                                         config != null &&
-                                         PSDStdPrefabSupport.HasAnyStdPrefabMatchEnabled(config) &&
-                                         PSDStdPrefabSupport.IsStdPrefabRoot(bind.psdItem) &&
-                                         PSDStdPrefabSupport.IsReservedStdPrefabNode(bind.unityNode as RectTransform, config)));
-
-                if (treatAsStdReuse)
-                {
-                    bind.stdPrefabMode = StdPrefabApplyMode.ReuseExisting;
-                    PSDCreateor.RefreshStdPrefabRoot(bind.unityNode.gameObject, bind.psdItem, cachedPsdData, config);
-                    SaveBindingIfNeeded(bindingAsset, bind, targetRoot.transform, storeBindingObjectReferences);
-                    count++;
-                    RegisterHierarchyNode(psdIdToNode, bind.psdItem, bind.unityNode, cachedPsdData);
-                    continue;
-                }
-
-                if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending)
-                {
-                    Transform stdParent = ResolveParentTransform(targetRoot.transform, bind.psdItem, cachedPsdData, psdIdToNode);
-                    GameObject stdPrefabGo = PSDStdPrefabSupport.InstantiatePendingPrefab(bind, stdParent);
-                    if (stdPrefabGo != null)
-                    {
-                        Undo.RegisterCreatedObjectUndo(stdPrefabGo, "Instantiate Standard Prefab");
-                        PSDCreateor.RefreshStdPrefabRoot(stdPrefabGo, bind.psdItem, cachedPsdData, config);
-                        bind.unityNode = stdPrefabGo.transform;
-                        bind.isAutoCreated = true;
-                        bind.isConfirmed = true;
-                        bind.statusInfo = $"Std prefab instantiated under '{stdParent.name}'";
-                        SaveBindingIfNeeded(bindingAsset, bind, targetRoot.transform, storeBindingObjectReferences);
-                        RegisterHierarchyNode(psdIdToNode, bind.psdItem, bind.unityNode, cachedPsdData);
-                        autoCreatedCount++;
-                        count++;
-                    }
-                    else
-                    {
-                        bind.statusInfo = $"Std prefab missing: {bind.stdPrefabAssetPath}";
-                    }
-                    continue;
-                }
 
                 // ── 正常匹配路径 ─────────────────────────────────────────────────────
                 if (bind.unityNode != null)
@@ -905,46 +791,11 @@ namespace PSDImporter
             return count;
         }
 
-        private static void ResolveStdPrefabBindings(
-            List<BindingPairViewModel> stdPrefabBinds,
-            GameObject targetRoot,
-            PSDData cachedPsdData,
-            PSDImportConfig config,
-            HashSet<Transform> occupiedNodes,
-            HashSet<BindingPairViewModel> matchedBindings,
-            bool logDetail)
-        {
-            if (stdPrefabBinds == null || stdPrefabBinds.Count == 0)
-            {
-                return;
-            }
-
-            Dictionary<int, Transform> psdIdToMatchedNode = new Dictionary<int, Transform>();
-            foreach (BindingPairViewModel binding in matchedBindings)
-            {
-                if (binding != null && binding.unityNode != null)
-                {
-                    RegisterHierarchyNode(psdIdToMatchedNode, binding.psdItem, binding.unityNode, cachedPsdData);
-                }
-            }
-
-            PSDStdPrefabSupport.ResolveStdPrefabBindings(
-                stdPrefabBinds,
-                targetRoot,
-                cachedPsdData,
-                config,
-                occupiedNodes,
-                matchedBindings,
-                psdIdToMatchedNode,
-                logDetail);
-        }
-
         private static void LogUnmatchedSummary(List<BindingPairViewModel> bindings)
         {
-            int unmatchedCount = bindings.Count(b => b.unityNode == null && b.stdPrefabMode != StdPrefabApplyMode.InstantiatePending);
-            int pendingInstantiateCount = bindings.Count(b => b.stdPrefabMode == StdPrefabApplyMode.InstantiatePending);
+            int unmatchedCount = bindings.Count(b => b.unityNode == null);
             float unmatchedRate = bindings.Count > 0 ? (float)unmatchedCount / bindings.Count : 0f;
-            Debug.Log($"[Match] Unmatched rate: {unmatchedCount}/{bindings.Count} ({unmatchedRate:P1}), stdInstantiatePending={pendingInstantiateCount}");
+            Debug.Log($"[Match] Unmatched rate: {unmatchedCount}/{bindings.Count} ({unmatchedRate:P1})");
         }
 
         private static void SaveBindingIfNeeded(PSDBindingData bindingAsset, BindingPairViewModel bind, Transform root, bool storeObjectReference)
@@ -954,7 +805,7 @@ namespace PSDImporter
                 return;
             }
 
-            if (bind.isConfirmed || bind.stdPrefabMode != StdPrefabApplyMode.None)
+            if (bind.isConfirmed)
             {
                 bindingAsset.SaveBinding(bind.psdItem.id, bind.psdItem.pngName, bind.unityNode.gameObject, root, storeObjectReference);
             }
@@ -1217,32 +1068,6 @@ namespace PSDImporter
             return acceptable;
         }
 
-        private static bool IsInsideMatchedStdPrefab(RectTransform node, HashSet<BindingPairViewModel> matchedBindings)
-        {
-            if (node == null || matchedBindings == null || matchedBindings.Count == 0)
-            {
-                return false;
-            }
-
-            foreach (BindingPairViewModel bind in matchedBindings)
-            {
-                if (bind == null ||
-                    bind.stdPrefabMode != StdPrefabApplyMode.ReuseExisting ||
-                    bind.unityNode == null ||
-                    node.transform == bind.unityNode)
-                {
-                    continue;
-                }
-
-                if (node.transform.IsChildOf(bind.unityNode))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         private static float CalculateIou(Vector2 aMin, Vector2 aMax, Vector2 bMin, Vector2 bMax)
         {
             float ixMin = Mathf.Max(aMin.x, bMin.x);
@@ -1285,15 +1110,6 @@ namespace PSDImporter
                 bind.idHistoryRejected = false;
                 bind.idHistoryRejectedPath = null;
                 bind.idHistoryRejectReason = null;
-            }
-            bind.stdPrefabFailureReason = null;
-            if (bind.stdPrefabCandidates == null)
-            {
-                bind.stdPrefabCandidates = new List<StdPrefabCandidateViewModel>();
-            }
-            else
-            {
-                bind.stdPrefabCandidates.Clear();
             }
         }
 

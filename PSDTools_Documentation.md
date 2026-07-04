@@ -33,10 +33,7 @@
 - `@V`：Vertical Layout 容器。  
 - `@G`：Grid Layout 容器。  
 - `@Item`：列表 Item 容器/模板。  
-- `@CommonSprite`：在 Unity 端进行普通通用图片匹配（详见配置说明）。  
-- `@CommonSpriteWhite`：在 Unity 端进行白色可染色通用图片匹配。  
-- `@ScrollRect`: scroll-list root. Use `@ScrollRect@V`, `@ScrollRect@H`, or `@ScrollRect@G`; alternatively put a direct `Content@V/@H/@G` group under it. Create mode generates normal `ScrollRect/Viewport/Content`; Restore mode matches existing ScrollRect/LoopScrollRect roots and routes children to Content.
-- `@PopUp`：通用弹窗底板 prefab 根。仅匹配 `Assets/ArtWorks/UI/Resources/Mini/UIPrefabs/CommonPrefbs/Panel` 下的 `Pnl_Win00.prefab` 到 `Pnl_Win09.prefab`，其它 Panel prefab 忽略。选型使用可见尺寸表：`Pnl_Win00 1004x642`、`Pnl_Win01 1216x710`、`Pnl_Win02 982x640`、`Pnl_Win03 982x640`、`Pnl_Win04 480x590`、`Pnl_Win05 608x396`、`Pnl_Win06 900.41x590`、`Pnl_Win07 618x626`、`Pnl_Win08 900.41x590`、`Pnl_Win09 1144x680`。 
+- `@ScrollRect`: scroll-list root. Use `@ScrollRect@V`, `@ScrollRect@H`, or `@ScrollRect@G`; alternatively put a direct `Content@V/@H/@G` group under it. Create mode generates normal `ScrollRect/Viewport/Content`; Restore mode matches existing ScrollRect roots and routes children to Content.
 
 导出脚本选项：
 - **Only Export @ Tagged**：勾选后仅导出带 `@` 的图层/组。  
@@ -66,13 +63,6 @@
 - `dedupeMoveDuplicates`：将重复 PNG 移动到子目录（不删除）。  
 - `dedupeMoveFolder`：重复 PNG 目标子目录名。  
 
-### 3.6 通用图片匹配
-- `commonSpriteMatch`：启用 `@CommonSprite` / `@CommonSpriteWhite` 匹配。  
-- `commonSpriteFolders`：通用图集所在目录（Assets 下路径）。  
-- `commonSpriteWhiteFolders`：白色可染色通用图集所在目录；为空时回退 `commonSpriteFolders`。  
-- `commonSpritePerceptualThreshold`：感知哈希阈值（0 关闭）。  
-- `commonSpriteMoveMatched`：匹配到通用图后，移动导出 PNG 到子目录。  
-- `commonSpriteMoveFolder`：匹配成功后的子目录名。  
 
 ### 3.7 组件覆盖
 - `imageComponent`：Image 覆盖组件（需继承 UnityEngine.UI.Image）。  
@@ -95,13 +85,11 @@ A：还原逻辑以 PSD 中心坐标为基准换算到目标节点 Anchor 下的
 **Q2：隐藏节点是否参与匹配？**  
 A：由 `skipInactiveMatch` 控制，勾选后会跳过 `inactive` 节点。  
 
-**Q4：通用图片匹配无效？**  
-A：检查 `commonSpriteMatch` 是否开启，`commonSpriteFolders` 是否有效。路径为空或无效会直接禁用并输出一次提示。  
 
-**Q5：重复图片怎么处理？**  
+**Q3：重复图片怎么处理？**  
 A：`dedupeSprites` 按像素哈希去重；`dedupeMoveDuplicates` 会将重复 PNG 移到指定子目录。  
 
-**Q6：导出 PNG 颜色/内容异常（黑图）？**  
+**Q4：导出 PNG 颜色/内容异常（黑图）？**  
 A：脚本会对组或智能对象执行合并/栅格化来避免黑图；如异常继续出现，检查是否为特殊图层效果导致。  
 
 ## 5. 技术文档（关键技术点与方法说明）
@@ -118,7 +106,6 @@ A：脚本会对组或智能对象执行合并/栅格化来避免黑图；如异
 - `PSDLayoutTool`：LayoutGroup 参数计算与应用。  
 - `PSDGroupTool`：空组对齐工具。  
 - `PSDAssetDeduper`：资源去重与路径规范化。  
-- `PSDCommonSpriteMatcher`：通用图片匹配（@CommonSprite / @CommonSpriteWhite）。  
 - `PSDNineSliceUtility`：九宫切片检测。  
 
 ### 5.2 匹配机制（核心公式）
@@ -140,8 +127,6 @@ A：脚本会对组或智能对象执行合并/栅格化来避免黑图；如异
 - `PSDCreateor.ApplyPsdPosition / ApplyPsdPositionLocal`：坐标换算，保持 Anchor 不变。  
 - `PSDMatchingStrategy.CalculateMatchScore`：基础评分公式。  
 - `VisualBindingWindow.RunAutoMatch`：可视化匹配入口，支持详细日志输出。  
-- `PSDCommonSpriteMatcher.TryResolveCommonSprite`：@CommonSprite 图像匹配（精确哈希优先，感知哈希兜底）与 @CommonSpriteWhite 白图染色匹配。  
-- `PSDCommonSpriteMatcher.MoveMatchedExport`：匹配到通用图后移动导出 PNG。  
 - `PSDNineSliceUtility.TryDetectBorder`：自动检测大面积重复像素并设置切片。  
 
 ### 5.5 日志与调试

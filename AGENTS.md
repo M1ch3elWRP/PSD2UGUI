@@ -44,11 +44,8 @@ Second-priority restore changes:
 - The Visual Binding UI shows the top1/top2 margin. Low-confidence matches are marked with `!` and are not auto-confirmed.
 - `PSDMatchLogExporter` includes the new matching config fields, pruning counters, hierarchy penalty counters, confidence margin, and low-confidence status.
 - `enableGeometryReject` is enabled by default and rejects candidates only when both center distance and relative size error are clearly bad, preventing stale nearby-ish nodes from winning by type or history.
-- `@StdBtn` reuse now detects strict NormalBtn candidates, `UIStdButton` prefab roots, and prefab roots under `/CommonPrefbs/Btn/`. Candidate diagnostics are exported as `stdPrefabCandidates`.
-- `@PopUp` is a standard popup panel prefab root. It only considers `Pnl_Win00` through `Pnl_Win09` under `/CommonPrefbs/Panel/`, using the built-in visible-size table for panel selection and reuse scoring.
-- `@ScrollRect` maps a PSD group to a scroll-list root. Create mode generates a normal `ScrollRect/Viewport/Content` structure; restore mode matches existing `ScrollRect` or `TZ.UI.VirtualScrollRect` roots and routes PSD list children to `Content`.
-- Image reuse runs after target PSD size is known. Default mode exact-reuses local duplicates and common sprites under `UITextures/Common`, `Common2`, `Panel`, and `Panel2`; `@CommonSprite` raises priority for project common sprite matching. `@CommonSpriteWhite` matches white tintable sprites from `commonSpriteWhiteFolders` by alpha shape and applies the PSD color through `Image.color`. Existing common sprite `spriteBorder` wins over auto 9-slice.
-- Popup visible sizes: `Pnl_Win00 1004x642`, `Pnl_Win01 1216x710`, `Pnl_Win02 982x640`, `Pnl_Win03 982x640`, `Pnl_Win04 480x590`, `Pnl_Win05 608x396`, `Pnl_Win06 900.41x590`, `Pnl_Win07 618x626`, `Pnl_Win08 900.41x590`, `Pnl_Win09 1144x680`.
+- `@ScrollRect` maps a PSD group to a scroll-list root. Create mode generates a normal `ScrollRect/Viewport/Content` structure; restore mode matches existing `ScrollRect` roots and routes PSD list children to `Content`.
+- Image reuse runs after target PSD size is known. Default mode exact-reuses local duplicates; existing sprite `spriteBorder` wins over auto 9-slice.
 - When a matched child is controlled by a parent `LayoutGroup`, Apply can sync the PSD skeleton parent rect onto the Unity parent container before restoring the child. This fixes Award-like group offset/size drift.
 
 ML matching is still intentionally disabled in `VisualBindingRestoreService`; do not re-enable it unless the user explicitly asks for the third-priority ML phase.
@@ -63,8 +60,8 @@ As of 2026-04-29, the package includes an agent-oriented audit chain for identif
 - `VisualBindingWindow` also has `导出审计包`, which exports from the current loaded binding state.
 - Audit truth uses `template_psd.png` when available. `layer_composite.png` is only the reconstructed exported-layer view and can miss text, common prefab visuals, and scene-only content.
 - Audit images use blue for PSD rects, orange for matched Unity rects, and red for suspect rects. Candidate colors are recorded in JSON.
-- Suspect detection combines match state and visual geometry: unmatched, auto-created/new-node, low confidence, poor IoU, large center/size error, displaced Hungarian choice, hierarchy outside parent, spatial pruning, geometry rejection, StdPrefab failures, and duplicate ambiguity.
-- `suspects.json` intentionally focuses on problems. Read `all_layers.json` when investigating a successful match that still behaved unexpectedly, such as `@StdBtn` reuse or geometry source selection.
+- Suspect detection combines match state and visual geometry: unmatched, auto-created/new-node, low confidence, poor IoU, large center/size error, displaced Hungarian choice, hierarchy outside parent, spatial pruning, geometry rejection, and duplicate ambiguity.
+- `suspects.json` intentionally focuses on problems. Read `all_layers.json` when investigating a successful match that still behaved unexpectedly, such as geometry source selection.
 - `all_layers.json` image entries include `imageReuse` diagnostics: source kind, selected sprite path, canonical export path, confidence, slice border, and rejection reason.
 - The intended agent loop is: run audit, inspect `audit_summary.json` and `all_layers.json`, inspect suspect PNGs visually, fill/update `agent_review_template.json` verdicts, identify cause tags, patch scoring/type/hierarchy/export/apply logic, rerun audit and regression.
 

@@ -828,7 +828,6 @@ namespace UnityMCP
             int textCount = data.listPngData.Count(item => item.isText);
             int buttonCount = data.listPngData.Count(item => string.Equals(item.uiType, "Button", StringComparison.OrdinalIgnoreCase));
             int imageCount = data.listPngData.Count(item => string.Equals(item.uiType, "Image", StringComparison.OrdinalIgnoreCase));
-            int stdPrefabRootCount = data.listPngData.Count(item => item.isStdPrefabRoot);
             int scrollContentAliasCount = data.listPngData.Count(item => item.isScrollContentAlias);
             int skeletonCount = data.skeleton != null ? data.skeleton.Count : 0;
 
@@ -844,7 +843,6 @@ namespace UnityMCP
                     groupName = item.groupName,
                     isText = item.isText,
                     layoutType = item.layoutType,
-                    stdPrefabKind = item.stdPrefabKind,
                     rect = new { x = item.x, y = item.y, width = item.width, height = item.height }
                 }).ToArray();
             }
@@ -861,7 +859,6 @@ namespace UnityMCP
                 textLayerCount = textCount,
                 imageLayerCount = imageCount,
                 buttonLayerCount = buttonCount,
-                stdPrefabRootCount = stdPrefabRootCount,
                 scrollContentAliasCount = scrollContentAliasCount,
                 skeletonCount = skeletonCount,
                 layerSamples = layerSamples

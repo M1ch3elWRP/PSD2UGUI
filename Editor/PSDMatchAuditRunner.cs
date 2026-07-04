@@ -104,10 +104,6 @@ namespace PSDImporter
             public float preLockDynamicMinThreshold;
             public bool autoSlice;
             public bool dedupeSprites;
-            public bool commonSpriteMatch;
-            public string commonSpriteMatchMode;
-            public string[] commonSpriteFolders;
-            public string[] commonSpriteWhiteFolders;
             public float textLayoutPaddingX;
             public float textLayoutPaddingY;
             public bool textPreserveLargerLayoutRect;
@@ -176,7 +172,6 @@ namespace PSDImporter
             public bool idHistoryRejected;
             public string idHistoryRejectedPath;
             public string idHistoryRejectReason;
-            public string stdPrefabFailureReason;
             public PSDImageReuseLog imageReuse;
             public int selectedCandidateRank;
             public int skippedTypeCandidates;
@@ -185,7 +180,6 @@ namespace PSDImporter
             public List<string> reasons = new List<string>();
             public List<string> causeTags = new List<string>();
             public List<AuditCandidate> topCandidates = new List<AuditCandidate>();
-            public List<StdPrefabCandidateViewModel> stdPrefabCandidates = new List<StdPrefabCandidateViewModel>();
             public string suspectImage;
         }
 
@@ -604,8 +598,8 @@ namespace PSDImporter
                 psdWidth = psdData.width,
                 psdHeight = psdData.height,
                 totalLayers = bindings.Count,
-                matchedLayers = bindings.Count(b => b.unityNode != null || b.stdPrefabMode == StdPrefabApplyMode.InstantiatePending),
-                unmatchedLayers = bindings.Count(b => b.unityNode == null && b.stdPrefabMode != StdPrefabApplyMode.InstantiatePending),
+                matchedLayers = bindings.Count(b => b.unityNode != null),
+                unmatchedLayers = bindings.Count(b => b.unityNode == null),
                 suspectLayers = suspects.Count,
                 maxTopCandidates = maxTopCandidates,
                 captureScale = captureScale,
@@ -711,16 +705,12 @@ namespace PSDImporter
                 idHistoryRejected = bind.idHistoryRejected,
                 idHistoryRejectedPath = bind.idHistoryRejectedPath,
                 idHistoryRejectReason = bind.idHistoryRejectReason,
-                stdPrefabFailureReason = bind.stdPrefabFailureReason,
                 imageReuse = PSDImageReuseLogStore.GetOrBuildCurrent(bind.psdItem, bind.unityNode, psdData.psdAssetsFolder, config),
                 selectedCandidateRank = selectedRank,
                 skippedTypeCandidates = bind.skippedTypeCandidates,
                 skippedSpatialCandidates = bind.skippedSpatialCandidates,
                 hierarchyPenalizedCandidates = bind.hierarchyPenalizedCandidates,
-                topCandidates = top,
-                stdPrefabCandidates = bind.stdPrefabCandidates != null
-                    ? new List<StdPrefabCandidateViewModel>(bind.stdPrefabCandidates)
-                    : new List<StdPrefabCandidateViewModel>()
+                topCandidates = top
             };
 
             if (matchedRectTransform != null)
@@ -774,16 +764,7 @@ namespace PSDImporter
                 }
             }
 
-            if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending)
-            {
-                AddReason(layer, "StdPrefabPending", "std_prefab");
-                if (!string.IsNullOrEmpty(bind.stdPrefabFailureReason))
-                {
-                    AddReason(layer, bind.stdPrefabFailureReason, "std_prefab");
-                }
-            }
-
-            if (bind.unityNode == null && bind.stdPrefabMode != StdPrefabApplyMode.InstantiatePending)
+            if (bind.unityNode == null)
             {
                 AddReason(layer, "Unmatched", "missing_node");
                 return;
@@ -1388,8 +1369,6 @@ namespace PSDImporter
                     statusInfo = "Waiting for match",
                     isIdMatched = false,
                     isPreLocked = false,
-                    stdPrefabMode = StdPrefabApplyMode.None,
-                    stdPrefabAssetPath = null,
                     depth = 0,
                     bestCandidateScore = 0f,
                     secondBestCandidateScore = 0f,
@@ -1566,8 +1545,6 @@ namespace PSDImporter
             if (bind.isIdMatched) return "ID_History";
             if (bind.isPreLocked) return "PreLock";
             if (bind.isAutoCreated) return "AutoCreated";
-            if (bind.stdPrefabMode == StdPrefabApplyMode.ReuseExisting) return "StdPrefabReuse";
-            if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending) return "StdPrefabPending";
             if (bind.unityNode != null) return "Hungarian";
             return "Unmatched";
         }
@@ -1646,10 +1623,6 @@ namespace PSDImporter
                 preLockDynamicMinThreshold = config.preLockDynamicMinThreshold,
                 autoSlice = config.autoSlice,
                 dedupeSprites = config.dedupeSprites,
-                commonSpriteMatch = config.commonSpriteMatch,
-                commonSpriteMatchMode = config.commonSpriteMatchMode.ToString(),
-                commonSpriteFolders = config.commonSpriteFolders,
-                commonSpriteWhiteFolders = config.commonSpriteWhiteFolders,
                 textLayoutPaddingX = config.textLayoutPaddingX,
                 textLayoutPaddingY = config.textLayoutPaddingY,
                 textPreserveLargerLayoutRect = config.textPreserveLargerLayoutRect,

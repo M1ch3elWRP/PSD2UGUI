@@ -3,13 +3,6 @@ using UnityEditor;
 
 namespace PSDImporter
 {
-    public enum PSDCommonSpriteMatchMode
-    {
-        TaggedOnly = 0,
-        AutoAndTagged = 1,
-        Aggressive = 2
-    }
-
     [CreateAssetMenu(fileName = "PSDImportConfig", menuName = "PSDTools/Import Config")]
     public class PSDImportConfig : ScriptableObject
     {
@@ -42,34 +35,6 @@ namespace PSDImporter
         public bool dedupeMoveDuplicates = false;
         [Tooltip("Subfolder name under PSD asset folder for moved duplicates.")]
         public string dedupeMoveFolder = "_Duplicates";
-
-        [Header("Common Sprite Matching")]
-        [Tooltip("Enable @CommonSprite/@CommonSpriteWhite layer matching against project sprites.")]
-        public bool commonSpriteMatch = true;
-
-        [Tooltip("Controls which PSD image layers can reuse project common sprites.")]
-        public PSDCommonSpriteMatchMode commonSpriteMatchMode = PSDCommonSpriteMatchMode.AutoAndTagged;
-
-        [Tooltip("Folders under Assets that contain common sprites (used for @CommonSprite matching).")]
-        public string[] commonSpriteFolders = new[]
-        {
-            "Assets/ArtWorks/UI/Resources/Mini/UITextures/Common",
-            "Assets/ArtWorks/UI/Resources/Mini/UITextures/Common2",
-            "Assets/ArtWorks/UI/Resources/Mini/UITextures/Panel",
-            "Assets/ArtWorks/UI/Resources/Mini/UITextures/Panel2"
-        };
-
-        [Tooltip("Folders under Assets that contain white tintable common sprites (used for @CommonSpriteWhite matching). Empty means fallback to commonSpriteFolders.")]
-        public string[] commonSpriteWhiteFolders = new string[0];
-
-        [Tooltip("Perceptual hash threshold for @CommonSprite fallback (0 to disable).")]
-        public int commonSpritePerceptualThreshold = 8;
-
-        [Tooltip("Move matched @CommonSprite/@CommonSpriteWhite exports into a subfolder for manual cleanup.")]
-        public bool commonSpriteMoveMatched = false;
-
-        [Tooltip("Subfolder name under PSD asset folder for matched @CommonSprite/@CommonSpriteWhite exports.")]
-        public string commonSpriteMoveFolder = "_CommonMatched";
 
         [Header("Component Overrides (optional)")]
         [Tooltip("Override @Img/@Image component. Must derive from UnityEngine.UI.Image.")]
@@ -179,41 +144,6 @@ namespace PSDImporter
         [Range(0f, 1f)]
         public float hierarchyOutsideParentPenalty = 0.85f;
 
-        [Header("Standard Prefab Matching")]
-        [Tooltip("Enable @StdBtn matching against the NormalBtn common prefab folder.")]
-        public bool enableStdButtonMatch = true;
-
-        [Tooltip("Prefab folder used by @StdBtn. Only prefabs in this folder are considered.")]
-        public string stdButtonPrefabFolder = "Assets/ArtWorks/UI/Resources/Mini/UIPrefabs/CommonPrefbs/Btn/NormalBtn";
-
-        [Tooltip("Minimum score required to reuse an existing white-mask standard button instance.")]
-        [Min(0f)]
-        public float stdButtonReuseMinScore = 120f;
-
-        [Tooltip("Minimum score gap between top1 and top2 candidates. Lower confidence falls back to instantiate.")]
-        [Min(0f)]
-        public float stdButtonReuseMinGap = 15f;
-
-        [Tooltip("Enable @ItemBox/@ItemCircle matching against the ItemIconNew common prefab folder.")]
-        public bool enableStdItemMatch = true;
-
-        [Tooltip("Prefab folder used by @ItemBox/@ItemCircle. Only supported common item prefabs in this folder are considered.")]
-        public string stdItemPrefabFolder = "Assets/ArtWorks/UI/Resources/Mini/UIPrefabs/CommonPrefbs/ItemIconNew";
-
-        [Tooltip("Enable @PopUp matching against the common popup panel prefab folder.")]
-        public bool enableStdPopupMatch = true;
-
-        [Tooltip("Prefab folder used by @PopUp. Only Pnl_Win00 through Pnl_Win09 are considered.")]
-        public string stdPopupPrefabFolder = "Assets/ArtWorks/UI/Resources/Mini/UIPrefabs/CommonPrefbs/Panel";
-
-        [Tooltip("Minimum score required to reuse an existing white-mask popup panel instance.")]
-        [Min(0f)]
-        public float stdPopupReuseMinScore = 120f;
-
-        [Tooltip("Minimum score gap between top1 and top2 popup candidates. Lower confidence falls back to instantiate.")]
-        [Min(0f)]
-        public float stdPopupReuseMinGap = 15f;
-
         [Header("Auto Create Unmatched Nodes")]
         [Tooltip("当 PSD 中有节点在白膜中找不到匹配时（装饰图、新增节点），自动在对应父节点下创建子节点。\n关闭则保持原有行为（仅标记 Unmatched，不创建）。")]
         public bool autoCreateUnmatched = true;
@@ -249,10 +179,6 @@ namespace PSDImporter
         [Tooltip("A match with score gap below this value is shown as low confidence and will not auto-confirm.")]
         [Min(0f)]
         public float lowConfidenceMargin = 15f;
-
-        [Header("Text Effects (require UITextOutline/UITextGradient scripts)")]
-        [Tooltip("Enable PSD text stroke and gradient effect mapping. Requires UITextOutline and UITextGradient scripts in project.\nDisable when project does not have these custom scripts to avoid errors.")]
-        public bool enableTextStrokeGradient = false;
 
         [Header("Debug Options")]
         [Tooltip("Always print Top5 candidates even when all items are matched by ID.")]

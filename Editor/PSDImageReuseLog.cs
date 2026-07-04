@@ -192,14 +192,7 @@ namespace PSDImporter
 
             if (!string.IsNullOrEmpty(spritePath))
             {
-                if (PSDCommonSpriteMatcher.IsCommonSpritePath(spritePath, config))
-                {
-                    hasTint = !ApproximatelyWhite(image.color);
-                    kind = hasTint
-                        ? PSDImageReuseSourceKind.ProjectCommonTint.ToString()
-                        : PSDImageReuseSourceKind.ProjectCommonExact.ToString();
-                }
-                else if (string.Equals(NormalizeAssetPath(spritePath), NormalizeAssetPath(expectedPath), StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(NormalizeAssetPath(spritePath), NormalizeAssetPath(expectedPath), StringComparison.OrdinalIgnoreCase))
                 {
                     kind = PSDImageReuseSourceKind.OriginalExport.ToString();
                 }

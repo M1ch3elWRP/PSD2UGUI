@@ -60,10 +60,6 @@ namespace PSDImporter
             public float lowConfidenceMargin;
             public bool autoSlice;
             public bool dedupeSprites;
-            public bool commonSpriteMatch;
-            public string commonSpriteMatchMode;
-            public string[] commonSpriteFolders;
-            public string[] commonSpriteWhiteFolders;
         }
 
         [Serializable]
@@ -83,8 +79,6 @@ namespace PSDImporter
             public bool idHistoryRejected;
             public string idHistoryRejectedPath;
             public string idHistoryRejectReason;
-            public string stdPrefabFailureReason;
-            public List<StdPrefabCandidateViewModel> stdPrefabCandidates = new List<StdPrefabCandidateViewModel>();
             public List<CandidateLog> candidates = new List<CandidateLog>();
             public FinalMatchLog finalMatch;
         }
@@ -144,7 +138,6 @@ namespace PSDImporter
             public int totalLayers;
             public int matched;
             public int unmatched;
-            public int pendingInstantiate;
             public float unmatchedRate;
         }
 
@@ -171,7 +164,6 @@ namespace PSDImporter
 
             int matched = 0;
             int unmatched = 0;
-            int pendingInstantiate = 0;
 
             for (int i = 0; i < bindings.Count; i++)
             {
@@ -182,11 +174,6 @@ namespace PSDImporter
                 if (bind.unityNode != null)
                 {
                     matched++;
-                }
-                else if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending)
-                {
-                    matched++;
-                    pendingInstantiate++;
                 }
                 else
                 {
@@ -199,7 +186,6 @@ namespace PSDImporter
                 totalLayers = bindings.Count,
                 matched = matched,
                 unmatched = unmatched,
-                pendingInstantiate = pendingInstantiate,
                 unmatchedRate = bindings.Count > 0 ? (float)unmatched / bindings.Count : 0f
             };
 
@@ -261,11 +247,7 @@ namespace PSDImporter
                     preLockMinScoreGap = config.preLockMinScoreGap,
                     lowConfidenceMargin = config.lowConfidenceMargin,
                     autoSlice = config.autoSlice,
-                    dedupeSprites = config.dedupeSprites,
-                    commonSpriteMatch = config.commonSpriteMatch,
-                    commonSpriteMatchMode = config.commonSpriteMatchMode.ToString(),
-                    commonSpriteFolders = config.commonSpriteFolders,
-                    commonSpriteWhiteFolders = config.commonSpriteWhiteFolders
+                    dedupeSprites = config.dedupeSprites
                 }
             };
         }
@@ -294,11 +276,7 @@ namespace PSDImporter
                 hierarchyPenalizedCandidates = bind.hierarchyPenalizedCandidates,
                 idHistoryRejected = bind.idHistoryRejected,
                 idHistoryRejectedPath = bind.idHistoryRejectedPath,
-                idHistoryRejectReason = bind.idHistoryRejectReason,
-                stdPrefabFailureReason = bind.stdPrefabFailureReason,
-                stdPrefabCandidates = bind.stdPrefabCandidates != null
-                    ? new List<StdPrefabCandidateViewModel>(bind.stdPrefabCandidates)
-                    : new List<StdPrefabCandidateViewModel>()
+                idHistoryRejectReason = bind.idHistoryRejectReason
             };
 
             // Collect all candidate nodes from the prefab and score them
@@ -363,7 +341,6 @@ namespace PSDImporter
             {
                 string method = bind.isIdMatched ? "ID_History"
                     : bind.isPreLocked ? "PreLock"
-                    : bind.stdPrefabMode == StdPrefabApplyMode.ReuseExisting ? "StdPrefabReuse"
                     : "Hungarian";
 
                 var matchNode = bind.unityNode.GetComponent<RectTransform>();
@@ -384,19 +361,6 @@ namespace PSDImporter
                     isLowConfidence = bind.isLowConfidence,
                     statusInfo = bind.statusInfo,
                     nodeGeometry = matchGeom
-                };
-            }
-            else if (bind.stdPrefabMode == StdPrefabApplyMode.InstantiatePending)
-            {
-                layer.finalMatch = new FinalMatchLog
-                {
-                    matchMethod = "StdPrefabPending",
-                    nodePath = bind.stdPrefabAssetPath,
-                    score = bind.score,
-                    scoreMargin = bind.scoreMargin,
-                    isLowConfidence = bind.isLowConfidence,
-                    statusInfo = bind.statusInfo,
-                    nodeGeometry = null
                 };
             }
             else
