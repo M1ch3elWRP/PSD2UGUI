@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -14,17 +14,12 @@ namespace UnityMCP
     public static class PSDToolsMCPBridge
     {
         private const string DefaultPsdRoot = "Assets/_OpenCode/TZUI/PS";
-        private const string DefaultAuditFolder = "Assets/_OpenCode/TZUI/PS/PSDTools/Log/Audit";
 
         static PSDToolsMCPBridge()
         {
             UnityHttpServer.RegisterMethod("psd/listData", ListData, true, true);
             UnityHttpServer.RegisterMethod("psd/inspectData", InspectData, true, true);
             UnityHttpServer.RegisterMethod("psd/createPrefab", CreatePrefab, true, true);
-            UnityHttpServer.RegisterMethod("psd/runRestoreAudit", RunRestoreAudit, true, true);
-            UnityHttpServer.RegisterMethod("psd/readAudit", ReadAudit, true, true);
-            UnityHttpServer.RegisterMethod("psd/captureRender", CaptureRender, true, true);
-            UnityHttpServer.RegisterMethod("psd/configureCvAuditTextures", ConfigureCvAuditTextures, true, true);
 
             UnityHttpServer.RegisterMethod("prefab/list", ListPrefabs, true, true);
             UnityHttpServer.RegisterMethod("prefab/inspect", InspectPrefab, true, true);
@@ -34,7 +29,6 @@ namespace UnityMCP
 
             UnityHttpServer.RegisterMethod("ugui/find", FindUguiObjects, true, true);
             UnityHttpServer.RegisterMethod("ugui/rectTransform", ManageRectTransform, true, true);
-            UnityHttpServer.RegisterMethod("ugui/validate", ValidateUgui, true, true);
         }
 
         private static object ListData(JObject request)
@@ -161,251 +155,6 @@ namespace UnityMCP
                 prefabGuid = prefabGuid,
                 scenePath = root.scene.IsValid() ? root.scene.path : ""
             };
-        }
-
-        private static object RunRestoreAudit(JObject request)
-        {
-            string psdDataPath = NormalizeOptionalAssetPath(GetString(request, "psdDataPath", null));
-            string targetRootPath = GetString(request, "targetRootPath", null);
-            string importConfigPath = GetString(request, "importConfigPath", null);
-            string outputFolder = NormalizeAssetPath(GetString(request, "outputFolder", DefaultAuditFolder));
-            string runModeText = GetString(request, "runMode", "DryRunAudit");
-            int maxTopCandidates = Mathf.Max(1, GetInt(request, "maxTopCandidates", 5));
-            int maxSuspects = Mathf.Max(1, GetInt(request, "maxSuspects", 12));
-            int captureScale = Mathf.Clamp(GetInt(request, "captureScale", 1), 1, 4);
-            int auditRenderWidth = GetInt(request, "auditRenderWidth", GetInt(request, "captureWidth", 0));
-            int auditRenderHeight = GetInt(request, "auditRenderHeight", GetInt(request, "captureHeight", 0));
-            bool includeSuspects = GetBool(request, "includeSuspects", true);
-            bool includeAllLayers = GetBool(request, "includeAllLayers", false);
-
-            PSDMatchAuditConfig config = ScriptableObject.CreateInstance<PSDMatchAuditConfig>();
-            try
-            {
-                config.psdDataPath = psdDataPath;
-                if (!string.IsNullOrEmpty(psdDataPath))
-                {
-                    config.psdDataAsset = AssetDatabase.LoadAssetAtPath<UnityObject>(psdDataPath);
-                }
-
-                config.targetRootPath = targetRootPath;
-                config.importConfig = ResolveImportConfig(importConfigPath);
-                config.outputFolder = outputFolder;
-                config.runMode = ParseAuditRunMode(runModeText);
-                config.maxTopCandidates = maxTopCandidates;
-                config.maxSuspects = maxSuspects;
-                config.captureScale = captureScale;
-                Vector2Int resolvedRenderSize = ResolveRequestedAuditRenderSize(targetRootPath, auditRenderWidth, auditRenderHeight);
-                config.auditRenderWidth = resolvedRenderSize.x;
-                config.auditRenderHeight = resolvedRenderSize.y;
-
-                string auditFolder = PSDMatchAuditRunner.Run(config);
-                if (string.IsNullOrEmpty(auditFolder))
-                {
-                    throw new InvalidOperationException("Restore audit failed. Check Unity console logs for [MatchAudit] errors.");
-                }
-
-                AssetDatabase.Refresh();
-                return BuildAuditResult(auditFolder, includeSuspects, includeAllLayers, maxSuspects);
-            }
-            finally
-            {
-                UnityObject.DestroyImmediate(config);
-            }
-        }
-
-        private static object ReadAudit(JObject request)
-        {
-            string auditFolder = NormalizeOptionalAssetPath(GetString(request, "auditFolder", null));
-            bool latest = GetBool(request, "latest", string.IsNullOrEmpty(auditFolder));
-            bool includeSuspects = GetBool(request, "includeSuspects", true);
-            bool includeAllLayers = GetBool(request, "includeAllLayers", false);
-            int maxSuspects = Mathf.Max(1, GetInt(request, "maxSuspects", 12));
-
-            if (latest)
-            {
-                auditFolder = FindLatestAuditFolder();
-            }
-
-            if (string.IsNullOrEmpty(auditFolder))
-            {
-                throw new DirectoryNotFoundException("No audit folder found.");
-            }
-
-            return BuildAuditResult(auditFolder, includeSuspects, includeAllLayers, maxSuspects);
-        }
-
-        private static object CaptureRender(JObject request)
-        {
-            string psdDataPath = RequirePsdDataPath(request);
-            string auditFolder = NormalizeOptionalAssetPath(GetString(request, "auditFolder", null));
-            string outputPath = NormalizeOptionalAssetPath(GetString(request, "outputPath", null));
-            string targetRootPath = GetString(request, "targetRootPath", null);
-            string prefabPath = NormalizeOptionalAssetPath(GetString(request, "prefabPath", null));
-            int explicitCaptureWidth = GetInt(request, "captureWidth", 0);
-            int explicitCaptureHeight = GetInt(request, "captureHeight", 0);
-            string captureSizeMode = GetString(request, "captureSizeMode", "TargetRoot");
-
-            PSDData psdData = PSDLoader.ReadJson(psdDataPath);
-            if (psdData == null)
-            {
-                throw new InvalidOperationException("Failed to read PSD data: " + psdDataPath);
-            }
-
-            if (string.IsNullOrEmpty(auditFolder))
-            {
-                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                string psdName = SanitizeFileName(Path.GetFileNameWithoutExtension(psdDataPath));
-                auditFolder = $"{DefaultAuditFolder}/Capture_{psdName}_{timestamp}";
-            }
-
-            if (string.IsNullOrEmpty(outputPath))
-            {
-                outputPath = $"{auditFolder.TrimEnd('/')}/unity_render.png";
-            }
-
-            GameObject loadedPrefabRoot = null;
-            GameObject targetRoot = null;
-            try
-            {
-                targetRoot = ResolveCaptureTarget(targetRootPath, prefabPath, out loadedPrefabRoot);
-                if (targetRoot == null)
-                {
-                    throw new InvalidOperationException("No target root found for render capture.");
-                }
-
-                Vector2Int captureSize = ResolveCaptureSize(targetRoot, psdData, explicitCaptureWidth, explicitCaptureHeight, captureSizeMode);
-                string capturedPath = PSDRenderCaptureUtility.CaptureToPng(targetRoot, captureSize.x, captureSize.y, outputPath);
-                return new
-                {
-                    psdDataPath = psdDataPath,
-                    targetRootPath = GetHierarchyPath(targetRoot),
-                    prefabPath = prefabPath,
-                    auditFolder = auditFolder,
-                    unityRenderImage = capturedPath,
-                    width = captureSize.x,
-                    height = captureSize.y,
-                    captureSizeMode = captureSizeMode,
-                    psdCanvas = new { width = psdData.width, height = psdData.height }
-                };
-            }
-            finally
-            {
-                if (loadedPrefabRoot != null)
-                {
-                    PrefabUtility.UnloadPrefabContents(loadedPrefabRoot);
-                }
-            }
-        }
-
-        private static Vector2Int ResolveCaptureSize(GameObject targetRoot, PSDData psdData, int explicitWidth, int explicitHeight, string captureSizeMode)
-        {
-            if (explicitWidth > 0 && explicitHeight > 0)
-            {
-                return new Vector2Int(explicitWidth, explicitHeight);
-            }
-
-            if (!string.Equals(captureSizeMode, "PsdData", StringComparison.OrdinalIgnoreCase))
-            {
-                // NGUI：通知所有 UIPanel 重排，再读取 root RectTransform 尺寸
-                var panels = targetRoot != null ? targetRoot.GetComponentsInChildren<UIPanel>(true) : null;
-                if (panels != null)
-                {
-                    for (int i = 0; i < panels.Length; i++)
-                    {
-                        if (panels[i] != null) panels[i].SetDirty();
-                    }
-                }
-                NGUITools.MarkParentChanged();
-                RectTransform rect = targetRoot != null ? targetRoot.GetComponent<RectTransform>() : null;
-                if (rect != null && rect.rect.width > 0f && rect.rect.height > 0f)
-                {
-                    return new Vector2Int(
-                        Mathf.Max(1, Mathf.RoundToInt(rect.rect.width)),
-                        Mathf.Max(1, Mathf.RoundToInt(rect.rect.height))
-                    );
-                }
-            }
-
-            return new Vector2Int(Mathf.Max(1, psdData.width), Mathf.Max(1, psdData.height));
-        }
-
-        private static object ConfigureCvAuditTextures(JObject request)
-        {
-            string auditFolder = NormalizeOptionalAssetPath(GetString(request, "auditFolder", null));
-            if (string.IsNullOrEmpty(auditFolder))
-            {
-                throw new ArgumentException("auditFolder is required.");
-            }
-
-            string fullFolder = ToAbsolutePath(auditFolder);
-            if (!Directory.Exists(fullFolder))
-            {
-                throw new DirectoryNotFoundException("Audit folder not found: " + auditFolder);
-            }
-
-            List<string> configured = new List<string>();
-            string[] rootFiles =
-            {
-                "template_psd.png",
-                "layer_composite.png",
-                "unity_render.png",
-                "cv_heatmap.png",
-                "cv_overlay.png"
-            };
-
-            foreach (string fileName in rootFiles)
-            {
-                string assetPath = $"{auditFolder.TrimEnd('/')}/{fileName}";
-                if (File.Exists(ToAbsolutePath(assetPath)))
-                {
-                    AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
-                    PSDRenderCaptureUtility.ConfigurePngImporter(assetPath);
-                    configured.Add(assetPath);
-                }
-            }
-
-            string suspectsFolder = $"{auditFolder.TrimEnd('/')}/suspects_cv";
-            string fullSuspectsFolder = ToAbsolutePath(suspectsFolder);
-            if (Directory.Exists(fullSuspectsFolder))
-            {
-                foreach (string fullPath in Directory.GetFiles(fullSuspectsFolder, "*.png", SearchOption.TopDirectoryOnly))
-                {
-                    string assetPath = NormalizeAssetPath(fullPath);
-                    AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
-                    PSDRenderCaptureUtility.ConfigurePngImporter(assetPath);
-                    configured.Add(assetPath);
-                }
-            }
-
-            AssetDatabase.Refresh();
-            return new
-            {
-                auditFolder = auditFolder,
-                configuredCount = configured.Count,
-                configured = configured
-            };
-        }
-
-        private static Vector2Int ResolveRequestedAuditRenderSize(string targetRootPath, int explicitWidth, int explicitHeight)
-        {
-            if (explicitWidth > 0 && explicitHeight > 0)
-            {
-                return new Vector2Int(explicitWidth, explicitHeight);
-            }
-
-            if (!string.IsNullOrEmpty(targetRootPath))
-            {
-                GameObject target = FindSceneGameObject(targetRootPath);
-                RectTransform rect = target != null ? target.GetComponent<RectTransform>() : null;
-                if (rect != null && rect.rect.width > 0f && rect.rect.height > 0f)
-                {
-                    return new Vector2Int(
-                        Mathf.Max(1, Mathf.RoundToInt(rect.rect.width)),
-                        Mathf.Max(1, Mathf.RoundToInt(rect.rect.height)));
-                }
-            }
-
-            return Vector2Int.zero;
         }
 
         private static object ListPrefabs(JObject request)
@@ -796,35 +545,6 @@ namespace UnityMCP
             };
         }
 
-        private static object ValidateUgui(JObject request)
-        {
-            string rootPath = GetString(request, "rootPath", null);
-            string prefabPath = NormalizeOptionalAssetPath(GetString(request, "prefabPath", null));
-            int maxIssues = Mathf.Max(1, GetInt(request, "maxIssues", 100));
-
-            if (!string.IsNullOrEmpty(prefabPath))
-            {
-                string validPrefabPath = RequirePrefabPath(prefabPath);
-                GameObject loaded = PrefabUtility.LoadPrefabContents(validPrefabPath);
-                try
-                {
-                    return ValidateUguiRoot(loaded, validPrefabPath, maxIssues);
-                }
-                finally
-                {
-                    PrefabUtility.UnloadPrefabContents(loaded);
-                }
-            }
-
-            GameObject root = string.IsNullOrEmpty(rootPath) ? FindFirstCanvasRoot() : FindSceneGameObject(rootPath);
-            if (root == null)
-            {
-                throw new InvalidOperationException("UGUI root not found.");
-            }
-
-            return ValidateUguiRoot(root, GetHierarchyPath(root), maxIssues);
-        }
-
         private static object BuildPsdDataInfo(string psdDataPath, bool includeLayerSamples)
         {
             PSDData data = PSDLoader.ReadJson(psdDataPath);
@@ -873,89 +593,6 @@ namespace UnityMCP
             };
         }
 
-        private static object BuildAuditResult(string auditFolder, bool includeSuspects, bool includeAllLayers, int maxSuspects)
-        {
-            auditFolder = NormalizeAssetPath(auditFolder);
-            string fullFolder = ToAbsolutePath(auditFolder);
-            if (!Directory.Exists(fullFolder))
-            {
-                throw new DirectoryNotFoundException("Audit folder not found: " + auditFolder);
-            }
-
-            JObject summary = ReadJsonObject(Path.Combine(fullFolder, "audit_summary.json"));
-            JObject suspects = includeSuspects ? ReadJsonObject(Path.Combine(fullFolder, "suspects.json")) : null;
-            JObject allLayers = includeAllLayers ? ReadJsonObject(Path.Combine(fullFolder, "all_layers.json")) : null;
-            JObject cvSummary = ReadJsonObject(Path.Combine(fullFolder, "cv_summary.json"));
-            string cvReport = ReadTextFile(Path.Combine(fullFolder, "cv_report.md"));
-
-            JArray suspectsArray = suspects != null ? suspects["suspects"] as JArray : null;
-            int suspectCount = suspectsArray != null ? suspectsArray.Count : 0;
-            JArray returnedSuspects = new JArray();
-            if (suspectsArray != null)
-            {
-                foreach (JToken item in suspectsArray.Take(maxSuspects))
-                {
-                    returnedSuspects.Add(item.DeepClone());
-                }
-            }
-
-            int allLayerCount = 0;
-            if (allLayers != null && allLayers["layers"] is JArray allLayerArray)
-            {
-                allLayerCount = allLayerArray.Count;
-            }
-
-            return new
-            {
-                auditFolder = auditFolder,
-                summary = summary,
-                suspectCount = suspectCount,
-                returnedSuspectCount = returnedSuspects.Count,
-                suspects = includeSuspects ? returnedSuspects : null,
-                allLayerCount = allLayerCount,
-                allLayers = includeAllLayers ? allLayers : null,
-                cvSummary = cvSummary,
-                cvReport = cvReport,
-                files = new
-                {
-                    auditSummary = File.Exists(Path.Combine(fullFolder, "audit_summary.json")),
-                    suspects = File.Exists(Path.Combine(fullFolder, "suspects.json")),
-                    allLayers = File.Exists(Path.Combine(fullFolder, "all_layers.json")),
-                    fullOverlay = File.Exists(Path.Combine(fullFolder, "full_overlay.png")),
-                    templatePsd = File.Exists(Path.Combine(fullFolder, "template_psd.png")),
-                    layerComposite = File.Exists(Path.Combine(fullFolder, "layer_composite.png")),
-                    agentReviewTemplate = File.Exists(Path.Combine(fullFolder, "agent_review_template.json")),
-                    unityRender = File.Exists(Path.Combine(fullFolder, "unity_render.png")),
-                    cvSummary = File.Exists(Path.Combine(fullFolder, "cv_summary.json")),
-                    cvLayers = File.Exists(Path.Combine(fullFolder, "cv_layers.json")),
-                    cvReport = File.Exists(Path.Combine(fullFolder, "cv_report.md")),
-                    cvHeatmap = File.Exists(Path.Combine(fullFolder, "cv_heatmap.png")),
-                    cvOverlay = File.Exists(Path.Combine(fullFolder, "cv_overlay.png")),
-                    cvSuspects = Directory.Exists(Path.Combine(fullFolder, "suspects_cv"))
-                }
-            };
-        }
-
-        private static JObject ReadJsonObject(string fullPath)
-        {
-            if (!File.Exists(fullPath))
-            {
-                return null;
-            }
-
-            return JObject.Parse(File.ReadAllText(fullPath));
-        }
-
-        private static string ReadTextFile(string fullPath)
-        {
-            if (!File.Exists(fullPath))
-            {
-                return null;
-            }
-
-            return File.ReadAllText(fullPath);
-        }
-
         private static PSDImportConfig ResolveImportConfig(string importConfigPath)
         {
             string path = NormalizeOptionalAssetPath(importConfigPath);
@@ -971,28 +608,6 @@ namespace UnityMCP
             }
 
             return PSDImportWorkflow.FindDefaultConfigAsset();
-        }
-
-        private static PSDMatchAuditRunMode ParseAuditRunMode(string runModeText)
-        {
-            if (string.IsNullOrEmpty(runModeText))
-            {
-                return PSDMatchAuditRunMode.DryRunAudit;
-            }
-
-            string normalized = runModeText.Replace("_", "").Replace("-", "");
-            if (string.Equals(normalized, "ApplyAndSave", StringComparison.OrdinalIgnoreCase))
-            {
-                return PSDMatchAuditRunMode.ApplyAndSave;
-            }
-
-            if (string.Equals(normalized, "DryRunAudit", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(normalized, "DryRun", StringComparison.OrdinalIgnoreCase))
-            {
-                return PSDMatchAuditRunMode.DryRunAudit;
-            }
-
-            throw new ArgumentException("Unsupported runMode: " + runModeText);
         }
 
         private static string RequirePsdDataPath(JObject request)
@@ -1015,22 +630,6 @@ namespace UnityMCP
             }
 
             return path;
-        }
-
-        private static string FindLatestAuditFolder()
-        {
-            string fullRoot = ToAbsolutePath(DefaultAuditFolder);
-            if (!Directory.Exists(fullRoot))
-            {
-                return null;
-            }
-
-            DirectoryInfo latest = new DirectoryInfo(fullRoot)
-                .GetDirectories("Audit_*", SearchOption.TopDirectoryOnly)
-                .OrderByDescending(dir => dir.LastWriteTimeUtc)
-                .FirstOrDefault();
-
-            return latest != null ? ToAssetPath(latest.FullName) : null;
         }
 
         private static void EnsureAssetFolder(string folderPath)
@@ -1074,62 +673,6 @@ namespace UnityMCP
             }
 
             return path;
-        }
-
-        private static GameObject ResolveCaptureTarget(string targetRootPath, string prefabPath, out GameObject loadedPrefabRoot)
-        {
-            loadedPrefabRoot = null;
-            string normalizedPrefabPath = NormalizeOptionalAssetPath(prefabPath);
-            string normalizedTargetPath = NormalizeOptionalAssetPath(targetRootPath);
-
-            if (!string.IsNullOrEmpty(normalizedPrefabPath))
-            {
-                string validPrefabPath = RequirePrefabPath(normalizedPrefabPath);
-                loadedPrefabRoot = PrefabUtility.LoadPrefabContents(validPrefabPath);
-                return loadedPrefabRoot;
-            }
-
-            if (!string.IsNullOrEmpty(normalizedTargetPath) &&
-                normalizedTargetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
-            {
-                string validPrefabPath = RequirePrefabPath(normalizedTargetPath);
-                loadedPrefabRoot = PrefabUtility.LoadPrefabContents(validPrefabPath);
-                return loadedPrefabRoot;
-            }
-
-            if (!string.IsNullOrEmpty(targetRootPath))
-            {
-                GameObject sceneRoot = FindSceneGameObject(targetRootPath);
-                if (sceneRoot != null)
-                {
-                    return sceneRoot;
-                }
-
-                GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(NormalizeAssetPath(targetRootPath));
-                if (prefabAsset != null)
-                {
-                    loadedPrefabRoot = PrefabUtility.LoadPrefabContents(NormalizeAssetPath(targetRootPath));
-                    return loadedPrefabRoot;
-                }
-            }
-
-            return FindFirstCanvasRoot();
-        }
-
-        private static string SanitizeFileName(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-            {
-                return "untitled";
-            }
-
-            char[] invalid = Path.GetInvalidFileNameChars();
-            foreach (char c in invalid)
-            {
-                value = value.Replace(c, '_');
-            }
-
-            return value.Replace(".ps", "");
         }
 
         private static object BuildGameObjectTree(GameObject go, int depth, int maxDepth, bool includeComponents)
@@ -1338,103 +881,6 @@ namespace UnityMCP
                     height = rect.rect.height
                 }
             };
-        }
-
-        private static object ValidateUguiRoot(GameObject root, string targetPath, int maxIssues)
-        {
-            List<object> issues = new List<object>();
-            RectTransform[] rects = root.GetComponentsInChildren<RectTransform>(true);
-            UISprite[] images = root.GetComponentsInChildren<UISprite>(true);
-            UILabel[] texts = root.GetComponentsInChildren<UILabel>(true);
-            UIButton[] buttons = root.GetComponentsInChildren<UIButton>(true);
-            UIScrollView[] scrollRects = root.GetComponentsInChildren<UIScrollView>(true);
-            int zeroSizeRectCount = 0;
-            int missingSpriteCount = 0;
-            int emptyTextCount = 0;
-            int brokenScrollRectCount = 0;
-
-            foreach (RectTransform rect in rects)
-            {
-                if ((rect.rect.width <= 0f || rect.rect.height <= 0f) && rect.gameObject.activeInHierarchy)
-                {
-                    zeroSizeRectCount++;
-                    AddIssue(issues, maxIssues, "zero_or_negative_rect", GetHierarchyPath(rect.gameObject), null, null);
-                }
-            }
-
-            foreach (UISprite image in images)
-            {
-                if ((image.atlas == null || string.IsNullOrEmpty(image.spriteName)) && image.gameObject.activeInHierarchy)
-                {
-                    missingSpriteCount++;
-                    AddIssue(issues, maxIssues, "image_missing_sprite", GetHierarchyPath(image.gameObject), "UISprite", null);
-                }
-            }
-
-            foreach (UILabel text in texts)
-            {
-                if (string.IsNullOrEmpty(text.text) && text.gameObject.activeInHierarchy)
-                {
-                    emptyTextCount++;
-                    AddIssue(issues, maxIssues, "empty_text", GetHierarchyPath(text.gameObject), "UILabel", null);
-                }
-            }
-
-            foreach (UIScrollView scrollRect in scrollRects)
-            {
-                List<string> missing = new List<string>();
-                if (scrollRect.panel == null) missing.Add("panel");
-                if (missing.Count > 0)
-                {
-                    brokenScrollRectCount++;
-                    AddIssue(issues, maxIssues, "scrollrect_missing_reference", GetHierarchyPath(scrollRect.gameObject), "UIScrollView", string.Join(",", missing.ToArray()));
-                }
-            }
-
-            return new
-            {
-                targetPath = targetPath,
-                ok = zeroSizeRectCount == 0 && missingSpriteCount == 0 && brokenScrollRectCount == 0,
-                rectTransformCount = rects.Length,
-                imageCount = images.Length,
-                textCount = texts.Length,
-                buttonCount = buttons.Length,
-                scrollRectCount = scrollRects.Length,
-                zeroSizeRectCount = zeroSizeRectCount,
-                missingSpriteCount = missingSpriteCount,
-                emptyTextCount = emptyTextCount,
-                brokenScrollRectCount = brokenScrollRectCount,
-                returnedIssueCount = issues.Count,
-                issues = issues
-            };
-        }
-
-        private static void AddIssue(List<object> issues, int maxIssues, string type, string path, string component, string detail)
-        {
-            if (issues.Count >= maxIssues)
-            {
-                return;
-            }
-
-            issues.Add(new
-            {
-                type = type,
-                path = path,
-                component = component,
-                detail = detail
-            });
-        }
-
-        private static GameObject FindFirstCanvasRoot()
-        {
-            UIRoot root = Resources.FindObjectsOfTypeAll<UIRoot>().FirstOrDefault(IsSceneObject);
-            if (root != null)
-            {
-                return root.gameObject;
-            }
-
-            RectTransform rect = Resources.FindObjectsOfTypeAll<RectTransform>().FirstOrDefault(IsSceneObject);
-            return rect != null ? rect.gameObject : null;
         }
 
         private static HashSet<string> ReadStringSet(JToken token)

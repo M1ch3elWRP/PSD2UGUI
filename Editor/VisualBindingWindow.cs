@@ -876,13 +876,6 @@ namespace PSDImporter
             GUI.enabled = true;
             GUI.backgroundColor = Color.white;
 
-            GUI.enabled = hasData && ActiveTargetRoot != null;
-            if (GUILayout.Button("导出审计包", GUILayout.Height(26), GUILayout.Width(100)))
-            {
-                PSDMatchAuditRunner.ExportAuditFromCurrentState(psdDataFile, ActiveTargetRoot, config, cachedPsdData, bindings);
-            }
-            GUI.enabled = true;
-
             GUILayout.FlexibleSpace();
 
             // 右侧状态提示

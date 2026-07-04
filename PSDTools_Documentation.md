@@ -137,12 +137,3 @@ A：脚本会对组或智能对象执行合并/栅格化来避免黑图；如异
 
 3) **统一特征口径（ML）**：
    - `PSDMatchFeatureExtractor` 的 `distNorm/sizeNorm/sameDepth/anchorDiff` 由 `PSDMatchScoring.BuildGeometryBreakdown` 提供，确保与规则路径共享同一几何结果。
-
-### 5.7 编辑器侧静态回归样例
-- 回归入口：`PSD2NGUI/Debug/Run Match Scoring Regression`。  
-- Fixture：`Editor/Fixtures/PSDMatchScoringRegression.fixture.json`。  
-- 校验目标：同一组几何输入下，以下三条路径输出一致：
-  1. `PSDMatchScoring.Evaluate`（统一评分入口）
-  2. `PSDMatchingStrategy.CalculateMatchScoreFromGeometry`
-  3. `VisualBindingRestoreService.CalculateScoreFromGeometry`
-- 同时校验 ML 特征中的几何项（dist/size/depth/anchor）与统一几何拆解一致。

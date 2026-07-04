@@ -8,7 +8,6 @@ The PSD restoration workspace is `D:\project\codesvn_for_import\Assets\_OpenCode
 
 - Unity menu `PSD2NGUI/Create UI From PSD`: open the PSD-to-NGUI creation workflow.
 - Unity menu `PSD2NGUI/Restore UI From PSD`: open restore/binding workflow.
-- Unity menu `PSD2NGUI/Debug/Run Match Scoring Regression`: run scoring regression fixture checks.
 - `node --check PhotoShopScript/ExportToPNG.jsx`: syntax-check the Photoshop export script.
 - `node --check PhotoShopPlugin/PSDLayerTaggerCEP/js/app.js`: syntax-check CEP panel logic.
 
@@ -18,15 +17,13 @@ After C# changes, refresh assets and force Unity script compilation; verify zero
 Use 4-space indentation for C#. Follow Unity conventions: PascalCase for types and public methods, camelCase for locals and private fields, and keep project classes `PSD`-prefixed (`PSDLoader`, `PSDMatchGeometry`). Keep editor-only code under `Editor/`. Preserve Unity `.meta` files and GUIDs when moving assets. For JSX/CEP JavaScript, follow the existing style and keep Photoshop-specific logic isolated from Unity C#.
 
 ## Testing Guidelines
-There is no standalone test runner configured. Prefer targeted Unity menu smoke tests in `PSD2NGUI/Debug/` and regression fixtures under `Editor/Fixtures/`. For restore or layout changes, test both scene instances and prefab assets, then inspect generated match logs only when needed.
-
-For agent-driven restore debugging, use `PSD2NGUI/Agent/Run Restore Audit` or `PSD2NGUI/Debug/Run Match Audit Smoke`. The smoke test should log `[MatchAuditSmoke] PASS` and export an audit package under `Log/Audit/`.
+There is no standalone test runner configured. For restore or layout changes, test both scene instances and prefab assets.
 
 ## Current Restore Matching Optimizations
-As of 2026-04-29, the first- and second-priority matching accuracy work plus the current audit/debug safeguards are part of this package.
+As of 2026-04-29, the first- and second-priority matching accuracy work is part of this package.
 
 First-priority restore changes:
-- `PSDMatchScoring` is the unified scoring path for restore matching and regression checks.
+- `PSDMatchScoring` is the unified scoring path for restore matching.
 - Size scoring uses relative width/height difference with an absolute `maxSizeDiff` fuse. Position scoring uses a soft threshold instead of a hard cliff.
 - `sameDepth` and `anchorDiff` now feed weighted score terms through `PSDImportConfig.weightDepth` and `PSDImportConfig.weightAnchor`.
 - `passThresholds` is based on geometry signal plus `minAcceptScore`, not just one loose geometry field.
@@ -49,21 +46,6 @@ Second-priority restore changes:
 - When a matched child is controlled by a parent `UITable`/`UIGrid`, Apply can sync the PSD skeleton parent rect onto the Unity parent container before restoring the child. This fixes Award-like group offset/size drift.
 
 ML matching is still intentionally disabled in `VisualBindingRestoreService`; do not re-enable it unless the user explicitly asks for the third-priority ML phase.
-
-## Agent Restore Audit Workflow
-As of 2026-04-29, the package includes an agent-oriented audit chain for identifying wrong restore matches.
-
-- `PSDMatchAuditConfig` is the configurable entrypoint. Default asset path: `Assets/_OpenCode/TZUI/PS/PSD2NGUI/Editor/PSDMatchAuditConfig.asset`.
-- `PSD2NGUI/Agent/Create Default Audit Config` creates/selects the default config.
-- `PSD2NGUI/Agent/Run Restore Audit` runs matching from the config. In DryRun it also simulates Apply on loaded prefab contents without saving assets, so layout/prefab side effects are visible in the audit image.
-- Audit packages export `audit_summary.json`, `all_layers.json`, `suspects.json`, `agent_review_template.json`, `template_psd.png` when a template exists, `layer_composite.png`, `full_overlay.png`, and cropped `suspects/*.png`.
-- `VisualBindingWindow` also has `导出审计包`, which exports from the current loaded binding state.
-- Audit truth uses `template_psd.png` when available. `layer_composite.png` is only the reconstructed exported-layer view and can miss text, common prefab visuals, and scene-only content.
-- Audit images use blue for PSD rects, orange for matched Unity rects, and red for suspect rects. Candidate colors are recorded in JSON.
-- Suspect detection combines match state and visual geometry: unmatched, auto-created/new-node, low confidence, poor IoU, large center/size error, displaced Hungarian choice, hierarchy outside parent, spatial pruning, geometry rejection, and duplicate ambiguity.
-- `suspects.json` intentionally focuses on problems. Read `all_layers.json` when investigating a successful match that still behaved unexpectedly, such as geometry source selection.
-- `all_layers.json` image entries include `imageReuse` diagnostics: source kind, selected sprite path, canonical export path, confidence, slice border, and rejection reason.
-- The intended agent loop is: run audit, inspect `audit_summary.json` and `all_layers.json`, inspect suspect PNGs visually, fill/update `agent_review_template.json` verdicts, identify cause tags, patch scoring/type/hierarchy/export/apply logic, rerun audit and regression.
 
 ## Commit & Pull Request Guidelines
 Git history was not inspected in this environment. Use concise imperative commits such as `fix: restore prefab matching geometry` or `docs: update PSD2NGUI guide`. PRs should include the Unity version, affected workflow, reproduction steps, validation performed, and screenshots or GIFs for UI/layout changes.
